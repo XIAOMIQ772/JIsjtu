@@ -1,0 +1,17 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+
+# Build and packaging output
+target/
+dist/
+__pycache__/
+*.pyc
+
+# Local tools and macOS metadata
+.DS_Store
+._*
+.commandcode/
+.codex/
+.agents/
