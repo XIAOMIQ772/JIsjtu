@@ -49,7 +49,7 @@ pub async fn chat_once(
     // 每一轮就是一次“思考 → 行动 → 观察”，最多执行 8 轮，防止无限循环。
     for _ in 0..120 {
         let request = CreateChatCompletionRequestArgs::default()
-            .model("deepseek-flash")
+            .model(std::env::var("MODEL")?)
             .tools(get_tools())
             .messages(messages.clone())
             .build()?;

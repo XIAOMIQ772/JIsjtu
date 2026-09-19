@@ -4,6 +4,10 @@
 
 前端使用 HTML / CSS / JavaScript，后端使用 Rust + Axum，通过 WebSocket 传递回答与工具进度。后端启动后会自动打开网页，无需单独启动前端。
 
+## 速度启动
+下载JIsjtu.zip
+解压后查看READNME.md
+
 ## 使用安装包
 
 仓库中的 [JIsjtu.zip](JIsjtu.zip) 适用于 **Apple Silicon Mac（arm64）**。下载、解压，在解压目录运行：
@@ -34,8 +38,9 @@ JIsjtu
 
 | 变量 | 用途 |
 | --- | --- |
-| `OPENAI_BASE_URL` | OpenAI 兼容服务的接口地址；后端目前使用 `deepseek-flash`，服务需支持该模型 |
+| `OPENAI_BASE_URL` | OpenAI 兼容服务的接口地址； |
 | `OPENAI_API_KEY` | 模型服务密钥 |
+| `MODEL` | 模型名称 |
 | `CANVAS_API_TOKEN` | 在 Canvas 的「账户 → 设置」创建访问令牌，用于课程、作业、课件查询 |
 | `EMAIL_USER_ACCOUNT` / `EMAIL_USER_PASSWORD` | 邮箱账号及 IMAP 所需密码或客户端授权码 |
 | `IMAP_HOST` / `IMAP_PORT` | 邮箱服务器；学校邮箱可设置 `imap.sjtu.edu.cn`、`993` |
