@@ -55,10 +55,11 @@ done
 
 if [ ! -e "$app_dir/.env" ]; then
     cat > "$app_dir/.env" <<'CONFIG'
-# 必填：模型服务的 API 密钥及兼容 OpenAI 的接口地址。
-# 当前后端使用 deepseek-flash，接口必须支持该模型。
+# 必填：模型服务的 API 密钥、兼容 OpenAI 的接口地址和模型名称。
+# MODEL 填写该接口支持的模型名称，例如 deepseek-flash。
 OPENAI_API_KEY=
 OPENAI_BASE_URL=
+MODEL=
 
 # Canvas 课程、作业、课件查询需要此令牌。
 CANVAS_API_TOKEN=
@@ -76,6 +77,7 @@ CONFIG
     printf '已生成配置模板：%s/.env\n' "$app_dir"
 else
     printf '已保留原配置：%s/.env\n' "$app_dir"
+    printf '升级提示：请检查原配置是否包含非空的 MODEL；缺少时请手动补上接口支持的模型名称。\n'
 fi
 
 launcher_stage=$(mktemp "$bin_dir/.JIsjtu.XXXXXX")
@@ -124,5 +126,6 @@ if [ "$register_path" = yes ]; then
     fi
 fi
 printf '\n安装完成。请先填写：%s/.env\n' "$app_dir"
+printf '对话必填：OPENAI_API_KEY、OPENAI_BASE_URL、MODEL。\n'
 printf '新开终端后运行：JIsjtu\n当前终端立即使用可先执行：\n%s\n' "$path_line"
 printf '查看配置位置：JIsjtu --config\n安装文件已复制，解压目录可以删除。\n'
