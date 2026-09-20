@@ -27,7 +27,7 @@ fn frontend_dir() -> PathBuf {
 async fn main() {
     dotenvy::dotenv().unwrap();
 
-    let http_port = env_port("AGENT_HTTP_PORT", 8080);
+    let http_port = env_port("AGENT_HTTP_PORT", 13376);
     let tcp_port = env_port("AGENT_TCP_PORT", 8081);
 
     let frontend = frontend_dir();

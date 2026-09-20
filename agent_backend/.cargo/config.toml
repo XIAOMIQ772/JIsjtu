@@ -1,0 +1,5 @@
+# imap-proto 0.10.2（imap 2.4.1 的传递依赖）命中 future-incompat lint，
+# 但它依赖 nom 5，无法通过升级或 [patch] 解决，只能等上游重写。
+# 这里关掉报告，避免每次构建刷屏。
+[future-incompat-report]
+frequency = "never"

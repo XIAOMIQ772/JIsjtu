@@ -112,7 +112,7 @@ async fn handle_socket(mut socket: WebSocket) {
                     continue;
                 }
 
-                println!("[ws] user: {prompt}");
+                //println!("[ws] user: {prompt}");
                 let messages = messages.clone();
                 let client = client.clone();
                 let tx = tx.clone();
@@ -132,7 +132,7 @@ async fn handle_socket(mut socket: WebSocket) {
         }
     }
 
-    println!("[ws] 客户端已断开");
+    println!("[log] 客户端已断开");
 }
 
 pub async fn serve_tcp(listener: TcpListener) {

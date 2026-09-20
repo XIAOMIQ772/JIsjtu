@@ -4,26 +4,6 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
     vec![
     ChatCompletionTools::Function(ChatCompletionTool {
         function: (FunctionObject {
-            name: "get_num".to_string(),
-            description: Some(
-                "when user ask questions about somethings' number ,use this tool".to_string(),
-            ),
-            parameters: Some(json!({
-                "type":"object",
-                "properties":{
-                    "password":{
-                        "type":"string",
-                        "description":"check id about who use this tool"
-                    }
-                },
-                "required":["password"],
-                "additionalProperties":false
-            })),
-            strict: Some(true),
-        }),
-    }),
-    ChatCompletionTools::Function(ChatCompletionTool {
-        function: (FunctionObject {
             name: "bash".to_string(),
             description: Some(
                 "在 bash 中执行命令，返回合并的 stdout/stderr。长时间任务放后台运行。".to_string(),
@@ -168,6 +148,26 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
                 "properties":{
                 },
                 "required":[],
+                "additionalProperties":false
+            })),
+            strict: Some(true),
+        }),
+    }),
+    ChatCompletionTools::Function(ChatCompletionTool {
+        function: (FunctionObject {
+            name: "open_usual_website".to_string(),
+            description: Some(
+                "打开用户指定的网页".to_string(),
+            ),
+            parameters: Some(json!({
+                "type":"object",
+                "properties":{
+                    "url":{
+                        "type":"string",
+                        "description":"如果用户指定了url，则为用户提供的url，如果用户只指明网站名字，则根据模型知识确定url，模型不确定url时，参数设置为none"
+                    }
+                },
+                "required":["url"],
                 "additionalProperties":false
             })),
             strict: Some(true),

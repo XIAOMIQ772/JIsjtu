@@ -20,3 +20,4 @@ __pycache__/
 .commandcode/
 .codex/
 .agents/
+src

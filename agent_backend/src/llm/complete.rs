@@ -97,9 +97,9 @@ pub async fn chat_once(
                             preview: preview(&result),
                         });
 
-                        println!("工具名称：{name}");
-                        println!("工具参数：{arguments}");
-                        println!("执行结果：{result}");
+                        // println!("工具名称：{name}");
+                        // println!("工具参数：{arguments}");
+                        // println!("执行结果：{result}");
 
                         // tool 消息必须带上对应的 tool_call_id。
                         messages.push(
@@ -124,7 +124,7 @@ pub async fn chat_once(
             .content
             .ok_or_else(|| anyhow::anyhow!("模型既没有文本，也没有工具调用"))?;
 
-        println!("model : {model_answer}");
+        //println!("model : {model_answer}");
         let _ = tx.send(ChatEvent::Answer {
             text: model_answer.clone(),
         });

@@ -1,3 +1,4 @@
+
 use mail_parser::MimeHeaders;
 
 use std::collections::HashMap;
@@ -21,6 +22,7 @@ pub async fn call(name: &str, arguments: serde_json::Value) -> Result<String, St
         "course_files"=>course_files(arguments).await,
         "watch_eduinfo"=>watch_eduinfo(arguments).await,
         "mail_fetch"=>mail_fetch(arguments).await,
+        "open_usual_website"=>open_usual_website(arguments).await,
         _ => Err("tool not found ,check tool name".to_string()),
     }
 }
@@ -355,6 +357,13 @@ async fn watch_eduinfo(_: serde_json::Value)->Result<String,String>{
     let base_url="https://i.sjtu.edu.cn/xtgl/login_slogin.html";
     let _= webbrowser::open(base_url);
     Ok("open browser sucessful".to_string())
+}
+async fn open_usual_website(arguments: serde_json::Value)->Result<String,String>{
+    let base_url = arguments["url"].as_str().unwrap();
+    match base_url{
+        "none"=>Err("不可知用户指定的网站具体url，请求提供".to_string()),
+        _=>{let _= webbrowser::open(base_url);Ok("open website sucessful".to_string())}
+    }   
 }
 
 
