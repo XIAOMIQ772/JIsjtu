@@ -1,3 +1,6 @@
+const MAX_REACT_STEPS:usize=360;
+
+
 use async_openai::types::chat::{
     ChatCompletionMessageToolCalls, ChatCompletionRequestAssistantMessageArgs,
     ChatCompletionRequestMessage, ChatCompletionRequestToolMessageArgs,
@@ -47,7 +50,7 @@ pub async fn chat_once(
     );
 
     // 每一轮就是一次“思考 → 行动 → 观察”，最多执行 8 轮，防止无限循环。
-    for _ in 0..120 {
+    for _ in 0..MAX_REACT_STEPS {
         let request = CreateChatCompletionRequestArgs::default()
             .model(std::env::var("MODEL")?)
             .tools(get_tools())

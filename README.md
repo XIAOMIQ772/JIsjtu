@@ -49,8 +49,40 @@ JIsjtu
 | `AGENT_HTTP_PORT` / `AGENT_TCP_PORT` | HTTP 与 TCP 端口，默认 `8080` / `8081` |
 | `AGENT_NO_BROWSER` | 设置此变量可跳过自动打开浏览器 |
 | `AGENT_FRONTEND_DIR` | 可选，指定前端静态文件目录 |
+| `AGENT_SKILLS_DIR` | 可选，指定技能目录；默认找当前目录或上一级的 `skills/` |
 
 模型配置用于对话；Canvas 和邮箱配置按需填写。
+
+## 技能
+
+「技能」是写给模型看的 Markdown 说明书，用来把某类任务的流程固定下来，比如校园卡查询步骤、某门课课件的下载方式、某个接口的参数和坑点。技能是纯文本，**新增后不需要重新编译**。
+
+在 `skills/` 下新建目录并放一份 `SKILL.md`：
+
+```
+skills/
+  campus-card/
+    SKILL.md
+```
+
+```markdown
+---
+name: campus-card
+description: 校园卡余额与消费记录查询流程
+---
+
+（正文：什么时候用、具体步骤、参数、注意事项）
+```
+
+后端启动时扫描技能目录，把 `name` 和 `description` 注入系统提示词；模型判断请求相符时，会先用 `read` 工具读取该文件全文，再按其中的步骤执行。技能正文只在需要时才进入上下文，所以可以写得很长。
+
+启动日志会打印加载结果：
+
+```
+已从 skills 加载 2 个技能：campus-card、exam-query
+```
+
+技能只在启动时扫描，改完要重启服务。格式细节和目录查找顺序见 [skills/README.md](skills/README.md)。
 
 ## 从源码运行
 

@@ -17,10 +17,10 @@ with tempfile.TemporaryDirectory(prefix="jisjtu-package-") as temporary:
     with zipfile.ZipFile(archive) as package:
         names = package.namelist()
         assert not any(name.endswith(".env") for name in names)
-        assert len([name for name in names if not name.endswith("/")]) == 5
+        assert len([name for name in names if not name.endswith("/")]) == 6
         package.extractall(root)
     extracted = root / archive.stem
-    assert {path.name for path in extracted.iterdir()} == {"install.sh", "agent", "agent_frontend"}
+    assert {path.name for path in extracted.iterdir()} == {"install.sh", "agent", "agent_frontend", "skills"}
     prefix = root / "install with space and 'quote"
     profile = root / "shell-profile"
     args = ["sh", str(extracted / "install.sh"), "--prefix", str(prefix), "--profile", str(profile)]
@@ -32,10 +32,15 @@ with tempfile.TemporaryDirectory(prefix="jisjtu-package-") as temporary:
     assert "启动服务" in subprocess.check_output([str(launcher), "--help"], text=True)
     with config.open("a") as file:
         file.write("\n# existing-user-config\n")
+    user_skill = prefix / "share/JIsjtu/skills/my-skill/SKILL.md"
+    user_skill.parent.mkdir(parents=True)
+    user_skill.write_text("---\nname: my-skill\ndescription: 用户自己加的技能\n---\n")
+    assert (prefix / "share/JIsjtu/skills/README.md").is_file(), "Skills directory must be installed"
     first_profile = profile.read_bytes()
     subprocess.run(args, check=True, capture_output=True, text=True)
     assert profile.read_bytes() == first_profile, "PATH registration must be idempotent"
     assert "existing-user-config" in config.read_text(), "Update must preserve user configuration"
+    assert user_skill.is_file(), "Update must preserve user skills"
     resolved = subprocess.check_output(["sh", "-c", '. "$1"; command -v JIsjtu', "sh", str(profile)], text=True)
     assert resolved.strip() == str(launcher), "Paths with spaces and quotes must work"
     conflict_prefix = root / "conflict"

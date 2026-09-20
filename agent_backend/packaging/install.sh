@@ -29,6 +29,7 @@ package_arch='@PACKAGE_ARCH@'
 for asset in agent agent_frontend/index.html agent_frontend/style.css agent_frontend/app.js; do
     [ -f "$package_dir/$asset" ] || fail "安装包缺少 $asset"
 done
+[ -d "$package_dir/skills" ] || fail '安装包缺少 skills 目录'
 
 mkdir -p "$prefix"
 prefix=$(CDPATH= cd -- "$prefix" && pwd)
@@ -41,7 +42,7 @@ fi
 if [ -e "$launcher" ] || [ -L "$launcher" ]; then
     [ ! -L "$launcher" ] && grep -Fqx '# Managed by JIsjtu installer' "$launcher" || fail "$launcher 已存在且不属于本安装器"
 fi
-mkdir -p "$app_dir/agent_frontend" "$bin_dir"
+mkdir -p "$app_dir/agent_frontend" "$app_dir/skills" "$bin_dir"
 printf 'JIsjtu\n' > "$app_dir/.jisjtu-install"
 
 # Stage the executable before replacing it, so updates also work on Linux.
@@ -52,6 +53,8 @@ mv -f "$binary_stage" "$app_dir/agent"
 for asset in index.html style.css app.js; do
     cp "$package_dir/agent_frontend/$asset" "$app_dir/agent_frontend/$asset"
 done
+# 合并而非替换：升级时保留用户自己添加的技能
+cp -R "$package_dir/skills/." "$app_dir/skills/"
 
 if [ ! -e "$app_dir/.env" ]; then
     cat > "$app_dir/.env" <<'CONFIG'
@@ -128,4 +131,6 @@ fi
 printf '\n安装完成。请先填写：%s/.env\n' "$app_dir"
 printf '对话必填：OPENAI_API_KEY、OPENAI_BASE_URL、MODEL。\n'
 printf '新开终端后运行：JIsjtu\n当前终端立即使用可先执行：\n%s\n' "$path_line"
-printf '查看配置位置：JIsjtu --config\n安装文件已复制，解压目录可以删除。\n'
+printf '查看配置位置：JIsjtu --config\n'
+printf '技能目录：%s/skills，放 <名字>/SKILL.md 即可扩展，改完重启生效。\n' "$app_dir"
+printf '安装文件已复制，解压目录可以删除。\n'

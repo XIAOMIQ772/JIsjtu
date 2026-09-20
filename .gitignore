@@ -9,6 +9,11 @@ dist/
 __pycache__/
 *.pyc
 
+# Runtime logs and scratch output
+*.log
+**/.review/
+**/session.json
+
 # Local tools and macOS metadata
 .DS_Store
 ._*

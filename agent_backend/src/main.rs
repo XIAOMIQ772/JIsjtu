@@ -1,5 +1,6 @@
 mod llm;
 mod server;
+mod skills;
 
 use std::path::PathBuf;
 
@@ -32,6 +33,31 @@ async fn main() {
     let frontend = frontend_dir();
     if !frontend.is_dir() {
         eprintln!("警告：前端目录 {} 不存在，页面将返回 404", frontend.display());
+    }
+
+    let skills_dir = skills::dir();
+    let loaded = skills::all();
+    if !skills_dir.is_dir() {
+        eprintln!(
+            "警告：技能目录 {} 不存在，本次不加载任何技能",
+            skills_dir.display()
+        );
+        if std::env::var("AGENT_SKILLS_DIR").is_ok() {
+            eprintln!("      （该路径来自 AGENT_SKILLS_DIR，按当前工作目录解析）");
+        }
+    } else if loaded.is_empty() {
+        println!("技能目录 {} 中没有技能", skills_dir.display());
+    } else {
+        println!(
+            "已从 {} 加载 {} 个技能：{}",
+            skills_dir.display(),
+            loaded.len(),
+            loaded
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<Vec<_>>()
+                .join("、")
+        );
     }
 
     let http_listener = tokio::net::TcpListener::bind(("0.0.0.0", http_port))

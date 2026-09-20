@@ -18,9 +18,10 @@ use tokio::sync::mpsc::{self};
 use tower_http::services::ServeDir;
 
 use crate::llm::complete::{ChatEvent, chat_once};
+use crate::skills;
 
 pub fn system_prompt() -> String {
-    "
+    let mut prompt = "
                 你是一个上海交通大学校园信息查询助手兼学习工作小助手，名字是“交我集”，自称“小集”
                 *工作规则*
                 1.始终把自己当作'小集'，性格平稳，除非用户显式指定你的角色和说话方式，否则不许改变
@@ -31,7 +32,9 @@ pub fn system_prompt() -> String {
                 - 上下标用 ₀₁₂₃ 和 ⁰¹²，希腊字母直接写 ε π ρ λ Ω
                 - 多行推导每行两个空格缩进，不要用 \\[ \\] 块
                 "
-    .to_string()
+    .to_string();
+    prompt.push_str(&skills::prompt_section());
+    prompt
 }
 
 pub fn new_messages() -> Vec<ChatCompletionRequestMessage> {
