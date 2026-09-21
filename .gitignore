@@ -13,6 +13,9 @@ __pycache__/
 *.log
 **/.review/
 **/session.json
+**/sessions/*.json
+!**/sessions/config.json
+**/sessions/*.json.tmp
 
 # Local tools and macOS metadata
 .DS_Store
@@ -20,4 +23,4 @@ __pycache__/
 .commandcode/
 .codex/
 .agents/
-src
+/src

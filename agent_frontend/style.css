@@ -182,3 +182,43 @@ h1 { font: 500 clamp(32px, 3.5vw, 45px)/1.5 var(--serif); letter-spacing: 2px; m
 @media (max-width: 390px) { .hero-art { width: 106px; top: 42px; opacity: .65; right: -12px; } h1 { font-size: 30px; } .topbar-divider { display: none; } .breadcrumb > span:first-child, .breadcrumb-slash { display: none; } .prompt-card { padding-inline: 10px; } }
 @media (max-height: 900px) and (min-width: 681px) { .welcome { padding-top: 23px; } .hero { padding-top: 18px; padding-bottom: 17px; } .hero-art { width: 205px; } h1 { font-size: 35px; margin-top: 10px; margin-bottom: 12px; } .prompt-card { padding-block: 15px; } .sidebar-note { padding-top: 24px; padding-bottom: 20px; } .composer-dock { padding-top: 10px; padding-bottom: 12px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+
+/* Sessions remain accessible while the active conversation is running. */
+.sidebar { height: 100dvh; overflow-y: auto; }
+.brand { margin-bottom: 28px; flex-shrink: 0; }
+.session-panel { margin-top: 26px; min-height: 130px; flex: 1; display: flex; flex-direction: column; border-top: 1px solid var(--line); padding-top: 17px; }
+.session-heading { display: flex; align-items: center; justify-content: space-between; padding: 0 12px 8px; font-size: 11px; color: var(--muted); }
+.session-heading button { appearance: none; background: transparent; color: var(--muted); padding: 5px 0 5px 10px; font-size: 10px; }
+.session-heading button:hover { color: var(--green); }
+.session-list { overflow-y: auto; min-height: 80px; max-height: 40dvh; scrollbar-width: thin; padding: 3px; }
+.session-item { appearance: none; display: block; width: 100%; min-width: 0; padding: 11px 12px; margin-bottom: 5px; border: 1px solid transparent; border-radius: 7px; text-align: left; background: transparent; color: #696e5e; font-family: var(--sans); }
+.session-item:hover { background: #e4e4d2; }
+.session-item.active { background: #dfe4d1; border-color: #d4ddc3; color: #3d5842; }
+.session-item.active .session-name { font-weight: 600; }
+.session-name { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.session-meta { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
+.session-item.running .session-meta { color: var(--green); }
+.session-item.running .session-meta::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: 6px; border-radius: 50%; background: #8c9b70; }
+.session-empty { padding: 0 12px; color: var(--muted); font-size: 11px; }
+.sidebar-note { display: none; }
+.sidebar-bottom { margin-top: 24px; }
+.shortcuts-label { margin-top: 22px; }
+.breadcrumb { min-width: 0; }
+#session-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar-actions { flex-shrink: 0; }
+.connection-notice { order: -1; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 24px; font-size: 12px; background: #eee7d7; color: #8a785a; }
+.connection-notice button { flex-shrink: 0; padding: 5px 10px; border: 1px solid #cfc7b2; border-radius: 6px; background: #fffcf3; color: var(--green); }
+
+@media (max-width: 680px) {
+  .sidebar { height: 163px; display: grid; grid-template-columns: 1fr auto; grid-template-rows: 44px 83px; gap: 9px 12px; padding: 9px 16px 8px; overflow: visible; }
+  .brand { margin: 0; }
+  .session-panel { grid-column: 1 / -1; margin: 0; min-height: 0; display: block; min-width: 0; border: 0; padding: 0; }
+  .session-heading { font-size: 10px; padding: 0 3px; height: 23px; }
+  .session-list { display: flex; gap: 7px; min-height: 0; max-height: none; overflow-x: auto; overflow-y: hidden; padding: 2px; }
+  .session-item { width: 150px; flex-shrink: 0; padding: 5px 9px; margin: 0; }
+  .session-name { font-size: 11px; }
+  .session-meta { font-size: 9px; margin-top: 1px; }
+  .session-empty { margin: 8px 3px; padding: 0; }
+  .workspace { height: calc(100dvh - 163px); }
+  .breadcrumb > span { display: none; }
+}

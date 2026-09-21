@@ -53,6 +53,16 @@ JIsjtu
 
 模型配置用于对话；Canvas 和邮箱配置按需填写。
 
+## 会话切换
+
+左侧「我的对话」显示已保存的会话，点击即可切换，不需要刷新页面。「开启新对话」会建立独立上下文，原会话仍保留。每个会话的输入草稿、滚动位置和工具进度独立；切走后任务继续执行，列表显示处理状态，切回时同步完整记录。草稿和滚动位置在当前页面内保留，聊天记录与模型上下文保存到磁盘，刷新或服务重启后仍可继续。
+
+会话由服务端管理，不依赖模型调用文件工具保存。`sessions/<稳定ID>.json` 保存完整模型消息（含工具调用及结果）、页面事件、创建时间和标题；标题取首次提问的前 28 个字符。`sessions/config.json` 是旧的格式示例，不作为聊天记录读取。可通过 `AGENT_SESSIONS_DIR` 指定存储位置，默认使用当前目录或上一级已有的 `sessions/`。
+
+接口：`GET /api/sessions` 列表，`POST /api/sessions` 新建，`GET /api/sessions/{id}` 历史；WebSocket `/ws?session_id=<id>` 恢复会话，发送 `{"type":"switch_session","session_id":"<id>"}` 热切换。服务端返回 `session_snapshot` 或带会话 ID、递增 revision 的 `session_event`，前端确认切换后才允许发送新消息。
+
+本次接口需要配套新版后端。前端测试使用本地模拟模型，不消耗真实 API 额度：安装 Playwright 后运行 `node agent_frontend/tests/sessions.cjs`；`PLAYWRIGHT_MODULE` 可指定已有 Playwright 模块路径，`AGENT_TEST_BINARY` 可指定已构建后端路径。
+
 ## 技能
 
 「技能」是写给模型看的 Markdown 说明书，用来把某类任务的流程固定下来，比如校园卡查询步骤、某门课课件的下载方式、某个接口的参数和坑点。技能是纯文本，**新增后不需要重新编译**。

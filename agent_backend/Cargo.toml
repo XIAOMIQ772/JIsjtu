@@ -21,4 +21,4 @@ tower-http = { version = "0.6", features = ["fs"] }
 imap = "2.4"
 native-tls = "0.2"
 mail-parser = { version = "0.11", features = ["encoding_rs", "full_encoding"] }
-
+chrono = "0.4"

@@ -1,0 +1,9 @@
+{
+"messages":{
+    "model":"text",
+    "user":"text",
+    "tool_call":"tool name",
+    "tool_result":"tool_result"
+},
+"create_time":"the first message stamp"
+}

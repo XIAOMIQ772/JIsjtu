@@ -7,7 +7,7 @@
   <meta name="description" content="交我集，你的交大校园与学习小助手。查课程、看作业、读资料，让校园日常轻松一点。">
   <title>交我集 · 你的校园书桌</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%233c5445'/%3E%3Ctext x='32' y='45' text-anchor='middle' font-size='42' fill='%23f6f1e3'%3E集%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/style.css?v=sessions-20260921-2">
 </head>
 <body>
   <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -30,7 +30,12 @@
       <span><strong>交我集<span class="brand-period">.</span></strong><small>你的校园书桌</small></span>
     </a>
     <div class="sidebar-section-label">在这里，理一理思绪</div>
-    <button class="nav-item active" id="chat-nav" type="button" aria-current="page"><svg class="icon"><use href="#i-chat"/></svg><span>和小集聊聊</span><span class="nav-dot"></span></button>
+    <button class="nav-item active" id="chat-nav" type="button"><svg class="icon"><use href="#i-chat"/></svg><span>开启新对话</span><span class="nav-dot"></span></button>
+    <section class="session-panel" aria-label="历史会话">
+      <div class="session-heading"><span>我的对话</span><button id="refresh-sessions" type="button" aria-label="刷新会话列表">刷新</button></div>
+      <div id="session-list" class="session-list" aria-label="切换会话"></div>
+      <p id="session-empty" class="session-empty" role="status">正在读取对话…</p>
+    </section>
     <div class="sidebar-section-label shortcuts-label">校园随行</div>
     <nav class="shortcuts" aria-label="快捷提问">
       <button class="nav-item" type="button" data-prompt="帮我查看这学期正在进行的课程。"><svg class="icon"><use href="#i-book"/></svg><span>我的课程</span><span class="nav-arrow">↗</span></button>
@@ -44,8 +49,8 @@
 
   <main class="workspace">
     <header class="topbar">
-      <div class="breadcrumb"><span>我的书桌</span><span class="breadcrumb-slash">/</span><strong>和小集聊聊</strong></div>
-      <div class="topbar-actions"><span class="status offline" id="status" role="status">连接中</span><span class="topbar-divider"></span><button class="clear-button" id="clear" type="button" title="只清空页面，当前连接中的对话上下文仍保留"><svg class="icon"><use href="#i-clear"/></svg><span>清空页面</span></button></div>
+      <div class="breadcrumb"><span>我的书桌</span><span class="breadcrumb-slash">/</span><strong id="session-title">新对话</strong></div>
+      <div class="topbar-actions"><span class="status offline" id="status" role="status">连接中</span><span class="topbar-divider"></span><button class="clear-button" id="clear" type="button" title="开启独立的新会话，当前对话保留在列表中"><svg class="icon"><use href="#i-chat"/></svg><span>新对话</span></button></div>
     </header>
 
     <div class="reading-area" id="reading-area">
@@ -100,8 +105,9 @@
       </form>
       <div class="composer-footer"><span class="keyboard-hint">Enter 发送 <span>·</span> Shift + Enter 换行</span><span>小集的回答仅供参考，重要信息请以官方通知为准。</span></div>
     </div>
+    <div class="connection-notice" id="connection-notice" role="status" hidden><span id="connection-notice-text"></span><button id="retry-connection" type="button">重新连接</button></div>
     <div class="toast" id="toast" role="status" hidden></div>
   </main>
-  <script src="/app.js"></script>
+  <script src="/app.js?v=sessions-20260921-2"></script>
 </body>
 </html>

@@ -42,6 +42,7 @@ pub async fn chat_once(
     client: &async_openai::Client<async_openai::config::OpenAIConfig>,
     tx: &UnboundedSender<ChatEvent>,
 ) -> anyhow::Result<()> {
+    
     messages.push(
         ChatCompletionRequestUserMessageArgs::default()
             .content(prompt)

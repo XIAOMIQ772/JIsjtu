@@ -153,21 +153,18 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
             strict: Some(true),
         }),
     }),
+    
     ChatCompletionTools::Function(ChatCompletionTool {
         function: (FunctionObject {
-            name: "open_usual_website".to_string(),
+            name: "get_time_stamp".to_string(),
             description: Some(
-                "打开用户指定的网页".to_string(),
+                "获取当前系统时间".to_string(),
             ),
             parameters: Some(json!({
                 "type":"object",
                 "properties":{
-                    "url":{
-                        "type":"string",
-                        "description":"如果用户指定了url，则为用户提供的url，如果用户只指明网站名字，则根据模型知识确定url，模型不确定url时，参数设置为none"
-                    }
                 },
-                "required":["url"],
+                "required":[],
                 "additionalProperties":false
             })),
             strict: Some(true),

@@ -1,6 +1,7 @@
 mod llm;
 mod server;
 mod skills;
+mod sessions;
 
 use std::path::PathBuf;
 
@@ -25,7 +26,9 @@ fn frontend_dir() -> PathBuf {
 
 #[tokio::main(worker_threads = 4)]
 async fn main() {
-    dotenvy::dotenv().unwrap();
+    if let Err(error) = dotenvy::dotenv() {
+        eprintln!("提示：未加载 .env（{error}），将继续使用进程环境变量");
+    }
 
     let http_port = env_port("AGENT_HTTP_PORT", 13376);
     let tcp_port = env_port("AGENT_TCP_PORT", 8081);

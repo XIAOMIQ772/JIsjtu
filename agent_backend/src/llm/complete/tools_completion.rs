@@ -15,6 +15,7 @@ pub async fn call(name: &str, arguments: serde_json::Value) -> Result<String, St
         "read" => run_read(arguments).await,
         "write" => run_write(arguments).await,
         "edit" => run_edit(arguments).await,
+        "get_time_stamp"=>get_time_stamp(arguments).await,
         "get_courses"=>get_courses(arguments).await,
         "get_exam"=>get_exam(arguments).await,
         "watch_shuiyuan"=>watch_shuiyuan(arguments).await,
@@ -364,6 +365,10 @@ async fn open_usual_website(arguments: serde_json::Value)->Result<String,String>
         "none"=>Err("不可知用户指定的网站具体url，请求提供".to_string()),
         _=>{let _= webbrowser::open(base_url);Ok("open website sucessful".to_string())}
     }   
+}
+async fn get_time_stamp(_: serde_json::Value)->Result<String,String>{
+    let now: String = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    Ok(now)
 }
 
 
