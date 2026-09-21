@@ -25,6 +25,8 @@ let pending = false;
 let reconnectTimer = null;
 let toastTimer = null;
 let hasConnected = false;
+// 同一次断线只提示一次：重连失败会不断触发 close，不能每次都追加提示。
+let disconnectNoticed = false;
 const activeTools = new Map();
 
 document.getElementById("today").textContent = new Intl.DateTimeFormat("zh-CN", {
@@ -247,13 +249,21 @@ function connect() {
     setStatus("小集在线", true);
     if (hasConnected) toast("已重新连接，小集将从新的对话上下文开始。 ");
     hasConnected = true;
+    disconnectNoticed = false;
   });
   connection.addEventListener("close", () => {
     if (socket !== connection) return;
     const interrupted = pending;
     finishTools("连接中断"); setPending(false); setStatus("离线 · 重连中", false);
-    if (interrupted) appendNotice("连接中断，本次回答未完成。重新连接后，可以再次发送问题。", true);
-    else if (hasConnected && messagesEl.childElementCount) appendNotice("连接已断开。重新连接后会开启新的对话上下文，页面上的内容仍会保留。");
+    if (interrupted) {
+      if (!disconnectNoticed) {
+        disconnectNoticed = true;
+        appendNotice("连接中断，本次回答未完成。重新连接后，可以再次发送问题。", true);
+      }
+    } else if (hasConnected && messagesEl.childElementCount && !disconnectNoticed) {
+      disconnectNoticed = true;
+      appendNotice("连接已断开。重新连接后会开启新的对话上下文，页面上的内容仍会保留。");
+    }
     scheduleReconnect();
   });
   connection.addEventListener("error", () => connection.close());
