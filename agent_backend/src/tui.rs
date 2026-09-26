@@ -175,13 +175,13 @@ impl App {
 
     fn default_status(&self) -> &'static str {
         if !self.connected {
-            "连接已断开"
+            "connection broken"
         } else if !self.ready {
-            "正在同步会话…"
+            "syncing sessions now"
         } else if self.is_busy() {
-            "正在处理…"
+            "processing"
         } else {
-            "就绪"
+            "ready"
         }
     }
 
@@ -426,16 +426,16 @@ fn draw(frame: &mut Frame, app: &mut App) {
 
 fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
     let connection = if app.connected {
-        "已连接"
+        "connecting"
     } else {
-        "已断开"
+        "break"
     };
     let title = app
         .session
         .as_ref()
         .map(|session| session.title.as_str())
         .filter(|title| !title.is_empty())
-        .unwrap_or("新对话");
+        .unwrap_or("new session");
     let status_color = if app.connected {
         Color::Green
     } else {
@@ -466,7 +466,7 @@ fn draw_history(frame: &mut Frame, app: &mut App, area: Rect) {
         app.follow_tail = app.scroll >= max_scroll;
     }
     let history = Paragraph::new(text)
-        .block(Block::default().borders(Borders::ALL).title(" 对话 "))
+        .block(Block::default().borders(Borders::ALL).title(" session "))
         .wrap(Wrap { trim: false })
         .scroll((app.scroll, 0));
     frame.render_widget(history, area);
@@ -474,16 +474,25 @@ fn draw_history(frame: &mut Frame, app: &mut App, area: Rect) {
 
 fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
     let title = if app.is_busy() {
-        " 输入（处理中） "
+        " input (analysing) "
     } else {
-        " 输入 "
+        " input "
     };
     let inner_width = area.width.saturating_sub(2).max(1);
     let visible_rows = area.height.saturating_sub(2).max(1);
     let before_cursor: String = app.input.chars().take(app.cursor).collect();
     let (cursor_row, cursor_column) = cursor_position(&before_cursor, inner_width);
     let input_scroll = cursor_row.saturating_sub(visible_rows.saturating_sub(1));
-    let input = Paragraph::new(app.input.as_str())
+    let display_text = if app.input.is_empty() {
+        Text::styled(
+            "   input your instructions",
+            Style::default().fg(Color::DarkGray),
+        )
+    } else {
+        Text::raw(app.input.as_str())
+    };
+
+    let input = Paragraph::new(display_text)
         .block(Block::default().borders(Borders::ALL).title(title))
         .wrap(Wrap { trim: false })
         .scroll((input_scroll, 0));
@@ -499,7 +508,7 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
 
 fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     let hint = if app.is_busy() {
-        "模型处理中 · ↑↓/PgUp/PgDn 滚动 · Esc/Ctrl+C 退出"
+        "processing · ↑↓/PgUp/PgDn 滚动 · Esc/Ctrl+C 退出"
     } else {
         "Enter 发送 · ↑↓/PgUp/PgDn 滚动 · Esc/Ctrl+C 退出"
     };
@@ -512,7 +521,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
 fn history_text(events: &[ChatEvent]) -> Text<'static> {
     if events.is_empty() {
         return Text::from(vec![Line::styled(
-            "输入消息开始对话。",
+            "",
             Style::default().fg(Color::DarkGray),
         )]);
     }

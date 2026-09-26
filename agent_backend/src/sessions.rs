@@ -93,7 +93,7 @@ impl Store {
         );
         let session = wrap(Record {
             id: id.clone(),
-            title: "新对话".into(),
+            title: "new session".into(),
             create_time: now.timestamp_millis(),
             updated_at: now.timestamp_millis(),
             messages: crate::server::new_messages(),
