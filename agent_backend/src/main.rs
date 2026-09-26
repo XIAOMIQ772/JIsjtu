@@ -1,7 +1,8 @@
 mod llm;
 mod server;
-mod skills;
 mod sessions;
+mod skills;
+mod tui;
 
 use std::path::PathBuf;
 
@@ -30,12 +31,16 @@ async fn main() {
         eprintln!("提示：未加载 .env（{error}），将继续使用进程环境变量");
     }
 
+    let tui_mode = std::env::args().any(|argument| argument == "--tui");
     let http_port = env_port("AGENT_HTTP_PORT", 13376);
     let tcp_port = env_port("AGENT_TCP_PORT", 8081);
 
     let frontend = frontend_dir();
     if !frontend.is_dir() {
-        eprintln!("警告：前端目录 {} 不存在，页面将返回 404", frontend.display());
+        eprintln!(
+            "警告：前端目录 {} 不存在，页面将返回 404",
+            frontend.display()
+        );
     }
 
     let skills_dir = skills::dir();
@@ -73,12 +78,24 @@ async fn main() {
     println!("网页对话界面：http://127.0.0.1:{http_port}");
     println!("裸 TCP 接口：  nc 127.0.0.1 {tcp_port}");
 
-    tokio::spawn(async move {
+    let http_task = tokio::spawn(async move {
         if let Err(err) = axum::serve(http_listener, router(frontend)).await {
             eprintln!("HTTP 服务退出: {err}");
         }
     });
-    tokio::spawn(serve_tcp(tcp_listener));
+    let tcp_task = tokio::spawn(serve_tcp(tcp_listener));
+
+    if tui_mode {
+        let result = tui::run(http_port).await;
+        http_task.abort();
+        tcp_task.abort();
+        let _ = http_task.await;
+        let _ = tcp_task.await;
+        if let Err(error) = result {
+            eprintln!("TUI 退出: {error:#}");
+        }
+        return;
+    }
 
     let url = format!("http://127.0.0.1:{http_port}");
     if std::env::var("AGENT_NO_BROWSER").is_ok() {
