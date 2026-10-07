@@ -41,6 +41,8 @@ let refreshing = false;
 let replaying = false;
 let listSignature = "";
 let displayedTime = null;
+let streamingAnswer = null;
+let answerFrame = null;
 
 document.getElementById("today").textContent = new Intl.DateTimeFormat("zh-CN", {
   month: "long", day: "numeric", weekday: "long",
@@ -48,7 +50,7 @@ document.getElementById("today").textContent = new Intl.DateTimeFormat("zh-CN", 
 
 function updateControls() {
   sendEl.disabled = !online || readyId !== selectedId || !selectedId || pending || !inputEl.value.trim();
-  sendLabelEl.textContent = pending ? "思考中" : "发送";
+  sendLabelEl.textContent = pending ? (streamingAnswer ? "回复中" : "思考中") : "发送";
   activityEl.hidden = !pending;
 }
 
@@ -195,6 +197,22 @@ function appendMessage(text, role) {
   else content.textContent = text;
   body.append(label, content); article.append(avatar, body); messagesEl.appendChild(article);
   scrollToBottom(role === "user", wasAtBottom);
+  return content;
+}
+
+function paintStreamingAnswer() {
+  answerFrame = null;
+  if (!streamingAnswer) return;
+  const wasAtBottom = atBottom();
+  streamingAnswer.content.replaceChildren();
+  renderAnswer(streamingAnswer.content, streamingAnswer.text);
+  scrollToBottom(false, wasAtBottom);
+}
+
+function finishStreamingAnswer() {
+  if (answerFrame !== null) cancelAnimationFrame(answerFrame);
+  paintStreamingAnswer();
+  streamingAnswer = null;
 }
 
 function appendNotice(text, isError = false) {
@@ -233,8 +251,10 @@ function handle(event) {
   const wasAtBottom = atBottom();
   switch (event.type) {
     case "user":
+      finishStreamingAnswer();
       appendMessage(event.text || "", "user"); break;
     case "tool_call": {
+      finishStreamingAnswer();
       const tool = createTool(event.name, event.arguments);
       const queue = activeTools.get(event.name) || [];
       queue.push(tool); activeTools.set(event.name, queue);
@@ -253,13 +273,28 @@ function handle(event) {
       scrollToBottom(false, wasAtBottom);
       break;
     }
+    case "answer_delta":
+      if (!event.text) break;
+      if (!streamingAnswer) streamingAnswer = { content: appendMessage("", "agent"), text: "" };
+      streamingAnswer.text += event.text;
+      if (answerFrame === null) answerFrame = requestAnimationFrame(paintStreamingAnswer);
+      setPending(true, "小集正在回复…");
+      break;
     case "answer":
-      finishTools("已结束"); appendMessage(event.text || "暂时没有回复内容，请再试一次。", "agent"); break;
+      finishTools("已结束");
+      if (streamingAnswer) {
+        streamingAnswer.text = event.text || streamingAnswer.text;
+        finishStreamingAnswer();
+      } else appendMessage(event.text || "暂时没有回复内容，请再试一次。", "agent");
+      break;
     case "error":
+      finishStreamingAnswer();
       finishTools("已中断"); setPending(false); appendNotice(event.text || "处理时遇到问题，请重试。", true); break;
     case "done":
+      finishStreamingAnswer();
       finishTools("已结束"); setPending(false); break;
     default:
+      finishStreamingAnswer();
       appendNotice("收到暂不支持的消息，请刷新页面后重试。", true);
       finishTools("已中断"); setPending(false);
   }
@@ -331,7 +366,7 @@ function upsert(summary) {
 
 function renderSessionList() {
   const ordered = [...sessions.values()].sort((a, b) => b.updated_at - a.updated_at);
-  const signature = JSON.stringify(ordered.map(s => [s.id, s.title, s.busy, s.unread, s.updated_at, s.id === selectedId]));
+  const signature = JSON.stringify(ordered.map(s => [s.id, s.title, s.busy, s.unread, Math.floor(s.updated_at / 60000), s.id === selectedId]));
   if (signature === listSignature) return;
   listSignature = signature;
   const focusedId = document.activeElement?.dataset.sessionId;
@@ -361,6 +396,8 @@ function renderSession(session, preserveScroll = false) {
   const scroll = preserveScroll ? readingEl.scrollTop : session.scroll;
   const bottom = preserveScroll && atBottom();
   replaying = true;
+  if (answerFrame !== null) cancelAnimationFrame(answerFrame);
+  answerFrame = null; streamingAnswer = null;
   messagesEl.replaceChildren(); activeTools.clear();
   welcomeEl.hidden = session.events.length > 0;
   messagesEl.hidden = !session.events.length;
@@ -368,10 +405,12 @@ function renderSession(session, preserveScroll = false) {
     displayedTime = event.at || session.create_time;
     handle(event);
   }
+  if (answerFrame !== null) cancelAnimationFrame(answerFrame);
+  paintStreamingAnswer();
   displayedTime = null;
   replaying = false;
-  if (!session.busy) finishTools("已中断");
-  setPending(session.busy || session.sending);
+  if (!session.busy) { finishStreamingAnswer(); finishTools("已中断"); }
+  setPending(session.busy || session.sending, streamingAnswer ? "小集正在回复…" : undefined);
   sessionTitleEl.textContent = session.title;
   readingEl.scrollTop = bottom || scroll === null ? readingEl.scrollHeight : scroll;
 }
@@ -424,7 +463,7 @@ function receive(payload) {
     }
   } else {
     if (payload.session.revision <= session.eventRevision) return;
-    session.events.push(payload.event); session.eventRevision = payload.session.revision;
+    appendSessionEvent(session, payload.event); session.eventRevision = payload.session.revision;
     session.loaded = true;
     if (payload.event.type === "user") {
       if (session.sending) {
@@ -441,6 +480,15 @@ function receive(payload) {
     } else session.unread = true;
   }
   renderSessionList();
+}
+
+function appendSessionEvent(session, event) {
+  const previous = session.events.at(-1);
+  if (previous?.type === "answer_delta" && event.type === "answer_delta") {
+    previous.text += event.text || "";
+  } else if (previous?.type === "answer_delta" && event.type === "answer") {
+    session.events[session.events.length - 1] = event;
+  } else session.events.push(event);
 }
 
 async function api(path, options) {

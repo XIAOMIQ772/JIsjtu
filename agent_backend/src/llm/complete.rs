@@ -1,5 +1,4 @@
-const MAX_REACT_STEPS:usize=360;
-
+const MAX_REACT_STEPS: usize = 360;
 
 use async_openai::types::chat::{
     ChatCompletionMessageToolCalls, ChatCompletionRequestAssistantMessageArgs,
@@ -7,12 +6,14 @@ use async_openai::types::chat::{
     ChatCompletionRequestUserMessageArgs, ChatCompletionTools, CreateChatCompletionRequestArgs,
 };
 use futures_util::future::BoxFuture;
-use serde_json::{Value};
+use serde_json::Value;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::llm::complete::tools::get_tools;
-pub mod tools_completion;
+mod streaming;
 pub mod tools;
+pub mod tools_completion;
+use streaming::{StreamedMessage, stream_message};
 use tools_completion::call;
 
 const EVENT_PREVIEW_CHARS: usize = 500;
@@ -21,10 +22,24 @@ const EVENT_PREVIEW_CHARS: usize = 500;
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ChatEvent {
-    ToolCall { name: String, arguments: String },
-    ToolResult { name: String, ok: bool, preview: String },
-    Answer { text: String },
-    Error { text: String },
+    ToolCall {
+        name: String,
+        arguments: String,
+    },
+    ToolResult {
+        name: String,
+        ok: bool,
+        preview: String,
+    },
+    AnswerDelta {
+        text: String,
+    },
+    Answer {
+        text: String,
+    },
+    Error {
+        text: String,
+    },
 }
 
 fn preview(text: &str) -> String {
@@ -56,7 +71,9 @@ pub(super) fn chat_subagent<'a>(
     client: &'a async_openai::Client<async_openai::config::OpenAIConfig>,
     model: &'a str,
 ) -> BoxFuture<'a, anyhow::Result<String>> {
-    Box::pin(chat_with_tools(messages, prompt, client, model, None, false))
+    Box::pin(chat_with_tools(
+        messages, prompt, client, model, None, false,
+    ))
 }
 
 async fn chat_with_tools(
@@ -88,23 +105,43 @@ async fn chat_with_tools(
             .tools(tools.clone())
             .messages(messages.clone())
             .build()?;
-        let response = client.chat().create(request).await?;
-        let message = response
-            .choices
-            .first()
-            .ok_or_else(|| anyhow::anyhow!("模型没有返回 choice"))?
-            .message
-            .clone();
+        let mut message = StreamedMessage::default();
+        if let Err(error) = stream_message(request, client, tx, &mut message).await {
+            // Preserve visible partial text, but never execute incomplete tool calls.
+            if !message.text.is_empty() {
+                messages.push(
+                    ChatCompletionRequestAssistantMessageArgs::default()
+                        .content(message.text)
+                        .build()?
+                        .into(),
+                );
+            }
+            return Err(error);
+        }
 
-        if let Some(tool_calls) = message.tool_calls.clone().filter(|calls| !calls.is_empty()) {
-            // assistant 的 tool-call 消息必须先加入历史。
-            messages.push(
-                ChatCompletionRequestAssistantMessageArgs::default()
-                    .tool_calls(tool_calls.clone())
-                    .build()?
-                    .into(),
-            );
+        let tool_calls = message
+            .tool_calls
+            .into_values()
+            .map(ChatCompletionMessageToolCalls::Function)
+            .collect::<Vec<_>>();
+        let mut assistant = ChatCompletionRequestAssistantMessageArgs::default();
+        if !message.text.is_empty() {
+            assistant.content(message.text.clone());
+        }
+        if !tool_calls.is_empty() {
+            assistant.tool_calls(tool_calls.clone());
+        }
+        // Store one complete assistant message before its tool results.
+        messages.push(assistant.build()?.into());
+        if !message.text.is_empty() {
+            if let Some(tx) = tx {
+                let _ = tx.send(ChatEvent::Answer {
+                    text: message.text.clone(),
+                });
+            }
+        }
 
+        if !tool_calls.is_empty() {
             for tool_call in tool_calls {
                 match tool_call {
                     ChatCompletionMessageToolCalls::Function(tool) => {
@@ -161,24 +198,7 @@ async fn chat_with_tools(
             continue;
         }
 
-        let model_answer = message
-            .content
-            .ok_or_else(|| anyhow::anyhow!("模型既没有文本，也没有工具调用"))?;
-
-        //println!("model : {model_answer}");
-        if let Some(tx) = tx {
-            let _ = tx.send(ChatEvent::Answer {
-                text: model_answer.clone(),
-            });
-        }
-
-        messages.push(
-            ChatCompletionRequestAssistantMessageArgs::default()
-                .content(model_answer.clone())
-                .build()?
-                .into(),
-        );
-        return Ok(model_answer);
+        return Ok(message.text);
     }
 
     Err(anyhow::anyhow!("ReAct 超过最大步数"))
@@ -186,7 +206,6 @@ async fn chat_with_tools(
 
 pub async fn tool_calling(name: &str, arguments_json: &str) -> anyhow::Result<String> {
     let arguments: Value = serde_json::from_str(arguments_json)?;
-    let result=call(name, arguments).await.map_err(anyhow::Error::msg);
+    let result = call(name, arguments).await.map_err(anyhow::Error::msg);
     result
 }
-

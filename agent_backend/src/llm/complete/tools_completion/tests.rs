@@ -1,9 +1,12 @@
 use super::*;
+use axum::response::{IntoResponse, Response, Sse, sse::Event};
 use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
+use futures_util::StreamExt;
 use serde_json::{Value, json};
 use std::collections::HashSet;
+use std::convert::Infallible;
 use std::time::Duration;
-use tokio::sync::Barrier;
+use tokio::sync::{Barrier, Notify};
 
 use crate::llm::complete::{ChatEvent, chat_with_tools, tools::get_tools};
 
@@ -85,6 +88,7 @@ async fn invalid_subagent_arguments_fail_before_model_configuration_or_execution
 struct MockState {
     requests: Arc<Mutex<Vec<Value>>>,
     first_requests: Arc<Barrier>,
+    release: Arc<Notify>,
 }
 
 struct MockModel {
@@ -98,6 +102,7 @@ impl MockModel {
         let state = MockState {
             requests: Arc::new(Mutex::new(Vec::new())),
             first_requests: Arc::new(Barrier::new(agents)),
+            release: Arc::new(Notify::new()),
         };
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -126,28 +131,73 @@ impl Drop for MockModel {
     }
 }
 
-fn completion(message: Value) -> (StatusCode, Json<Value>) {
-    let reason = if message.get("tool_calls").is_some() {
-        "tool_calls"
-    } else {
-        "stop"
-    };
-    (
-        StatusCode::OK,
-        Json(json!({
-            "id": "mock-completion",
-            "object": "chat.completion",
-            "created": 1,
-            "model": "mock-model",
-            "choices": [{"index": 0, "finish_reason": reason, "message": message}],
-        })),
-    )
+fn chunk(delta: Value, finish_reason: Value) -> Value {
+    json!({
+        "id": "mock-completion", "object": "chat.completion.chunk",
+        "created": 1, "model": "mock-model",
+        "choices": [{"index": 0, "finish_reason": finish_reason, "delta": delta}],
+    })
 }
 
-async fn mock_completion(
-    State(state): State<MockState>,
-    Json(request): Json<Value>,
-) -> (StatusCode, Json<Value>) {
+fn sse(chunks: Vec<Value>) -> Response {
+    let events = chunks
+        .into_iter()
+        .map(|chunk| Event::default().data(chunk.to_string()))
+        .chain(std::iter::once(Event::default().data("[DONE]")))
+        .map(Ok::<_, Infallible>);
+    Sse::new(futures_util::stream::iter(events)).into_response()
+}
+
+fn completion(message: Value) -> Response {
+    let mut chunks = vec![chunk(
+        json!({"role": "assistant", "content": ""}),
+        Value::Null,
+    )];
+    if let Some(text) = message["content"].as_str() {
+        for character in text.chars() {
+            chunks.push(chunk(
+                json!({"content": character.to_string()}),
+                Value::Null,
+            ));
+        }
+    }
+    let mut reason = "stop";
+    if let Some(calls) = message["tool_calls"].as_array() {
+        reason = "tool_calls";
+        // Interleave calls and split their names and arguments across SSE events.
+        for (index, call) in calls.iter().enumerate().rev() {
+            chunks.push(chunk(json!({"tool_calls": [{
+                "index": index, "id": call["id"], "type": "function",
+                "function": {"name": &call["function"]["name"].as_str().unwrap()[..2], "arguments": ""},
+            }]}), Value::Null));
+        }
+        for (index, call) in calls.iter().enumerate() {
+            let name = call["function"]["name"].as_str().unwrap();
+            let arguments = call["function"]["arguments"].as_str().unwrap();
+            chunks.push(chunk(
+                json!({"tool_calls": [{
+                    "index": index, "function": {"name": &name[2..]},
+                }]}),
+                Value::Null,
+            ));
+            for part in arguments.chars() {
+                chunks.push(chunk(
+                    json!({"tool_calls": [{
+                        "index": index, "function": {"arguments": part.to_string()},
+                    }]}),
+                    Value::Null,
+                ));
+            }
+        }
+    }
+    chunks.push(chunk(json!({}), json!(reason)));
+    let mut usage = chunk(json!({}), Value::Null);
+    usage["choices"] = json!([]);
+    chunks.push(usage);
+    sse(chunks)
+}
+
+async fn mock_completion(State(state): State<MockState>, Json(request): Json<Value>) -> Response {
     let messages = request["messages"].as_array().unwrap();
     let task = messages
         .iter()
@@ -162,21 +212,55 @@ async fn mock_completion(
         // A serial implementation cannot pass this barrier.
         state.first_requests.wait().await;
     }
+    if task == "stream-early" {
+        let first = futures_util::stream::iter([Ok::<_, Infallible>(
+            Event::default().data(chunk(json!({"content": "第一段"}), Value::Null).to_string()),
+        )]);
+        let rest = futures_util::stream::once(async move {
+            state.release.notified().await;
+            Ok::<_, Infallible>(
+                Event::default()
+                    .data(chunk(json!({"content": "，后续内容"}), Value::Null).to_string()),
+            )
+        })
+        .chain(futures_util::stream::iter([
+            Ok(Event::default().data(chunk(json!({}), json!("stop")).to_string())),
+            Ok(Event::default().data("[DONE]")),
+        ]));
+        return Sse::new(first.chain(rest)).into_response();
+    }
+    if matches!(task, "stream-truncated" | "stream-limited") {
+        let mut chunks = vec![
+            chunk(json!({"content": "尚未完成的回复"}), Value::Null),
+            chunk(
+                json!({"tool_calls": [{
+                    "index": 0, "id": "must-not-run", "type": "function",
+                    "function": {"name": "get_time_stamp", "arguments": "{}"},
+                }]}),
+                Value::Null,
+            ),
+        ];
+        if task == "stream-limited" {
+            chunks.push(chunk(json!({}), json!("length")));
+        }
+        return sse(chunks);
+    }
     if task == "task-2" {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({
                 "error": {"message": "模拟模型错误", "type": "invalid_request_error"},
             })),
-        );
+        )
+            .into_response();
     }
     if task == "task-3" {
         return completion(json!({"role": "assistant", "content": null}));
     }
     if task == "task-4" {
-        let (status, mut response) = completion(json!({"role": "assistant", "content": null}));
-        response.0["choices"] = json!([]);
-        return (status, response);
+        let mut response = chunk(json!({}), Value::Null);
+        response["choices"] = json!([]);
+        return sse(vec![response]);
     }
     if first_request && matches!(task, "task-0" | "root-task") {
         let mut calls = vec![json!({
@@ -254,6 +338,7 @@ async fn subagents_run_concurrently_with_isolated_contexts_tools_and_partial_fai
     );
     for request in requests.iter() {
         assert_eq!(request["model"], "mock-model");
+        assert_eq!(request["stream"], true);
         assert!(
             !request["tools"]
                 .as_array()
@@ -343,7 +428,18 @@ async fn shared_chat_loop_preserves_parent_events_and_history() {
     assert!(
         matches!(rx.try_recv().unwrap(), ChatEvent::ToolResult { name, ok: true, .. } if name == "get_time_stamp")
     );
-    assert!(matches!(rx.try_recv().unwrap(), ChatEvent::Answer { text } if text == answer));
+    let mut fragments = String::new();
+    loop {
+        match rx.try_recv().unwrap() {
+            ChatEvent::AnswerDelta { text } => fragments.push_str(&text),
+            ChatEvent::Answer { text } => {
+                assert_eq!(text, answer);
+                break;
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+    assert_eq!(fragments, answer);
     assert!(rx.try_recv().is_err());
     let history = serde_json::to_value(messages).unwrap();
     assert_eq!(
@@ -358,4 +454,84 @@ async fn shared_chat_loop_preserves_parent_events_and_history() {
             .iter()
             .any(|tool| { tool["function"]["name"] == "create_subagents" })
     );
+}
+
+#[tokio::test]
+async fn answer_fragments_arrive_before_the_model_finishes() {
+    let mock = MockModel::start(1).await;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut messages = new_messages();
+    let run = chat_with_tools(
+        &mut messages,
+        "stream-early",
+        &mock.client,
+        "mock-model",
+        Some(&tx),
+        true,
+    );
+    let observe = async {
+        assert!(
+            matches!(rx.recv().await.unwrap(), ChatEvent::AnswerDelta { text } if text == "第一段")
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "the final answer must still be pending"
+        );
+        mock.state.release.notify_one();
+        assert!(
+            matches!(rx.recv().await.unwrap(), ChatEvent::AnswerDelta { text } if text == "，后续内容")
+        );
+        assert!(
+            matches!(rx.recv().await.unwrap(), ChatEvent::Answer { text } if text == "第一段，后续内容")
+        );
+    };
+    let (answer, ()) =
+        tokio::time::timeout(Duration::from_secs(5), async { tokio::join!(run, observe) })
+            .await
+            .unwrap();
+    assert_eq!(answer.unwrap(), "第一段，后续内容");
+    let history = serde_json::to_value(messages).unwrap();
+    assert_eq!(
+        history.as_array().unwrap().last().unwrap()["content"],
+        "第一段，后续内容"
+    );
+}
+
+#[tokio::test]
+async fn interrupted_stream_keeps_partial_text_without_executing_tools() {
+    for (prompt, expected) in [
+        ("stream-truncated", "提前结束"),
+        ("stream-limited", "长度限制"),
+    ] {
+        let mock = MockModel::start(1).await;
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut messages = new_messages();
+        let error = tokio::time::timeout(
+            Duration::from_secs(5),
+            chat_with_tools(
+                &mut messages,
+                prompt,
+                &mock.client,
+                "mock-model",
+                Some(&tx),
+                true,
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+        assert!(error.to_string().contains(expected), "{error}");
+        assert!(
+            matches!(rx.try_recv().unwrap(), ChatEvent::AnswerDelta { text } if text == "尚未完成的回复")
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "no tool call or final-answer event is allowed"
+        );
+        assert_eq!(mock.state.requests.lock().unwrap().len(), 1);
+        let history = serde_json::to_value(messages).unwrap();
+        let last = history.as_array().unwrap().last().unwrap();
+        assert_eq!(last["content"], "尚未完成的回复");
+        assert!(last.get("tool_calls").is_none());
+    }
 }

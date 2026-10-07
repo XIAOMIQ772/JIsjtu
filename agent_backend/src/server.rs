@@ -27,6 +27,7 @@ pub fn system_prompt() -> String {
                 *工作规则*
                 1.始终把自己当作'小集'，性格平稳，除非用户显式指定你的角色和说话方式，否则不许改变
                 2.会话的创建、时间戳、历史消息与工具调用由服务端自动保存，无需自行创建、重命名或修改 sessions 会话文件。
+                3.遇到无法解决的问题时，先尝试自我编写脚本或程序于tmp文件夹以实现，如无法解决，向用户说明情况
 
                 *输出规则*
                 - 禁止使用 LaTeX，不要出现 $...$、\\frac、\\varepsilon、\\mathrm 这类写法
@@ -60,13 +61,15 @@ pub fn router(frontend_dir: PathBuf) -> Router {
         .route("/api/sessions/{id}", get(get_session))
         .with_state(store)
         .fallback_service(ServeDir::new(frontend_dir))
-        .layer(axum::middleware::map_response(|mut response: axum::response::Response| async move {
-            response.headers_mut().insert(
-                axum::http::header::CACHE_CONTROL,
-                axum::http::HeaderValue::from_static("no-store"),
-            );
-            response
-        }))
+        .layer(axum::middleware::map_response(
+            |mut response: axum::response::Response| async move {
+                response.headers_mut().insert(
+                    axum::http::header::CACHE_CONTROL,
+                    axum::http::HeaderValue::from_static("no-store"),
+                );
+                response
+            },
+        ))
 }
 
 async fn list_sessions(
@@ -240,6 +243,7 @@ async fn handle_tcp(mut stream: TcpStream, addr: SocketAddr) {
         }
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ChatEvent>();
+        let mut streaming_answer = false;
         let run = chat_once(&mut messages, &prompt, &client, &tx);
         tokio::pin!(run);
 
@@ -248,31 +252,50 @@ async fn handle_tcp(mut stream: TcpStream, addr: SocketAddr) {
                 result = &mut run => {
                     // 事件是发完就结束的，模型答完后要把队列里剩下的都吐出来
                     while let Ok(event) = rx.try_recv() {
-                        forward_tcp(&mut stream, event).await;
+                        forward_tcp(&mut stream, event, &mut streaming_answer).await;
                     }
                     break result;
                 }
-                Some(event) = rx.recv() => forward_tcp(&mut stream, event).await,
+                Some(event) = rx.recv() => forward_tcp(&mut stream, event, &mut streaming_answer).await,
             }
         };
 
         if let Err(err) = outcome {
             eprintln!("本轮处理失败: {err:#}");
-            let _ = stream
-                .write_all(format!("error: {err:#}\n").as_bytes())
-                .await;
+            forward_tcp(
+                &mut stream,
+                ChatEvent::Error {
+                    text: format!("{err:#}"),
+                },
+                &mut streaming_answer,
+            )
+            .await;
         }
     }
 }
 
-async fn forward_tcp(stream: &mut TcpStream, event: ChatEvent) {
+async fn forward_tcp(stream: &mut TcpStream, event: ChatEvent, streaming_answer: &mut bool) {
     match event {
-        ChatEvent::Answer { text } => {
-            let _ = stream.write_all("model:".as_bytes()).await;
+        ChatEvent::AnswerDelta { text } => {
+            if !*streaming_answer {
+                let _ = stream.write_all(b"model:").await;
+                *streaming_answer = true;
+            }
             let _ = stream.write_all(text.as_bytes()).await;
+        }
+        ChatEvent::Answer { text } => {
+            if !*streaming_answer {
+                let _ = stream.write_all(b"model:").await;
+                let _ = stream.write_all(text.as_bytes()).await;
+            }
             let _ = stream.write_all("\n".as_bytes()).await;
+            *streaming_answer = false;
         }
         ChatEvent::Error { text } => {
+            if *streaming_answer {
+                let _ = stream.write_all(b"\n").await;
+                *streaming_answer = false;
+            }
             let _ = stream
                 .write_all(format!("error: {text}\n").as_bytes())
                 .await;

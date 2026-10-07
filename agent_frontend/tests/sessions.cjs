@@ -24,23 +24,44 @@ const model = http.createServer(async (req, res) => {
   for await (const chunk of req) chunks.push(chunk);
   const body = JSON.parse(Buffer.concat(chunks));
   calls.push(body);
-  const user = body.messages.filter(m => m.role === 'user').at(-1).content;
+  const user = body.messages.filter(m => m.role === 'user').at(-1).content.trim();
+  assert.equal(body.stream, true, 'Every model request must use streaming');
   if (user === '模拟错误') {
     res.writeHead(400, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ error: { message: '模拟模型错误', type: 'invalid_request_error' } }));
     return;
   }
+  res.setHeader('content-type', 'text/event-stream');
+  const chunk = (delta, finish_reason = null) => {
+    const bytes = Buffer.from(`data: ${JSON.stringify({ id: 'fake', object: 'chat.completion.chunk', created: 1, model: 'fake',
+      choices: [{ index: 0, finish_reason, delta }] })}\n\n`);
+    // Exercise UTF-8 decoding when a Chinese character crosses HTTP chunks.
+    const split = bytes.findIndex(byte => byte >= 0x80) + 1;
+    if (split > 0) { res.write(bytes.subarray(0, split)); res.write(bytes.subarray(split)); }
+    else res.write(bytes);
+  };
+  const finish = (reason = 'stop') => { chunk({}, reason); res.end('data: [DONE]\n\n'); };
+  chunk({ role: 'assistant', content: '' });
   if (user === '工具测试' && body.messages.at(-1).role === 'user') {
-    res.setHeader('content-type', 'application/json');
-    res.end(JSON.stringify({ id: 'fake-tool', object: 'chat.completion', created: 1, model: 'fake',
-      choices: [{ index: 0, finish_reason: 'tool_calls', message: { role: 'assistant', content: null,
-        tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'get_time_stamp', arguments: '{}' } }] } }] }));
+    chunk({ tool_calls: [{ index: 0, id: 'call-1', type: 'function', function: { name: 'get_time_stamp', arguments: '{' } }] });
+    chunk({ tool_calls: [{ index: 0, function: { arguments: '}' } }] });
+    finish('tool_calls');
     return;
   }
+  if (user === '流式输出测试' || user === 'TCP 流式') {
+    chunk({ content: '第一段内容' });
+    held.push(() => { chunk({ content: '，后续内容。' }); finish(); });
+    return;
+  }
+  if (user === '模拟流式中断') {
+    chunk({ content: '中断前已经生成的内容' });
+    res.end('data: [DONE]\n\n');
+    return;
+  }
+  chunk({ content: '回答：' });
   const reply = () => {
-    res.setHeader('content-type', 'application/json');
-    res.end(JSON.stringify({ id: 'fake', object: 'chat.completion', created: 1, model: 'fake',
-      choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: `回答：${user}` } }] }));
+    chunk({ content: user });
+    finish();
   };
   if (user === 'A 的慢任务') held.push(reply);
   else reply();
@@ -99,6 +120,7 @@ async function until(check, message) {
   await page.locator('#input').fill('A 的慢任务');
   await page.locator('#send').click();
   await until(() => held.length === 1, 'Model did not receive A');
+  await page.getByText('回答：', { exact: true }).waitFor();
   await page.locator('#input').fill('A 的独立草稿');
   await page.locator('#chat-nav').click();
   await until(() => page.locator('.session-item').count().then(count => count === 2), 'New session was not created');
@@ -160,6 +182,57 @@ async function until(check, message) {
   await page.locator('#input').fill('错误后继续');
   await page.locator('#send').click();
   await page.getByText('回答：错误后继续', { exact: true }).waitFor();
+
+  await page.locator('#input').fill('流式输出测试');
+  await page.locator('#send').click();
+  await page.getByText('第一段内容', { exact: true }).waitFor();
+  assert.equal(held.length, 1, 'The model must still be waiting to finish');
+  assert.equal(await page.locator('#send').isDisabled(), true);
+  let streamingSnapshot = await (await fetch(`${base}/api/sessions/${sessionA}`)).json();
+  assert.equal(streamingSnapshot.events.at(-1).type, 'answer_delta');
+  assert.equal(streamingSnapshot.events.at(-1).text, '第一段内容');
+  await page.reload();
+  await page.getByText('第一段内容', { exact: true }).waitFor();
+  assert.equal(await page.getByText('第一段内容', { exact: true }).count(), 1);
+  await page.locator(`[data-session-id="${sessionB}"]`).click();
+  await page.getByText('回答：B 的问题', { exact: true }).waitFor();
+  assert.equal(await page.getByText('第一段内容', { exact: true }).count(), 0);
+  await page.locator(`[data-session-id="${sessionA}"]`).click();
+  await page.getByText('第一段内容', { exact: true }).waitFor();
+  held.shift()();
+  await page.getByText('第一段内容，后续内容。', { exact: true }).waitFor();
+  assert.equal(await page.getByText('第一段内容，后续内容。', { exact: true }).count(), 1);
+  await until(async () => !(await (await fetch(`${base}/api/sessions/${sessionA}`)).json()).session.busy, 'Stream did not finish');
+  const saved = JSON.parse(fs.readFileSync(path.join(root, 'sessions', `${sessionA}.json`)));
+  assert.equal(saved.events.filter(e => e.type === 'answer' && e.text === '第一段内容，后续内容。').length, 1);
+  assert(!saved.events.some(e => e.type === 'answer_delta'), 'Completed streams must not retain duplicate fragments');
+  await page.reload();
+  await page.getByText('第一段内容，后续内容。', { exact: true }).waitFor();
+  assert.equal(await page.getByText('第一段内容，后续内容。', { exact: true }).count(), 1);
+
+  await page.locator('#input').fill('模拟流式中断');
+  await page.locator('#send').click();
+  await page.getByText('中断前已经生成的内容', { exact: true }).waitFor();
+  await page.locator('.notice.error').filter({ hasText: '提前结束' }).waitFor();
+  await page.locator('#input').fill('中断后继续');
+  await page.locator('#send').click();
+  await page.getByText('回答：中断后继续', { exact: true }).waitFor();
+  assert(calls.at(-1).messages.some(m => m.role === 'assistant' && m.content === '中断前已经生成的内容'));
+
+  const tcpClient = net.createConnection({ host: '127.0.0.1', port: tcp });
+  tcpClient.setEncoding('utf8');
+  let tcpOutput = '';
+  tcpClient.on('data', data => { tcpOutput += data; });
+  try {
+    await until(() => tcpOutput === 'you:', 'TCP prompt did not arrive');
+    tcpClient.write('TCP 流式\n');
+    await until(() => tcpOutput.includes('model:第一段内容'), 'TCP did not stream the first fragment');
+    assert(!tcpOutput.includes('后续内容'));
+    held.shift()();
+    await until(() => tcpOutput.endsWith('第一段内容，后续内容。\nyou:'), 'TCP did not finish streaming');
+    assert.equal(tcpOutput.match(/model:/g).length, 1);
+  } finally { tcpClient.destroy(); }
+
   for (const [width, height] of [[1280, 800], [768, 1024], [390, 844], [320, 740]]) {
     await page.setViewportSize({ width, height });
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Horizontal overflow at ${width}`);
@@ -175,7 +248,7 @@ async function until(check, message) {
   await stalled.locator('#connection-notice-text').filter({ hasText: '连接超时' }).waitFor({ timeout: 15000 });
   assert(await stalled.locator('#retry-connection').isVisible(), 'Stalled connection must offer retry');
   await stalled.close();
-  console.log('PASS: real HTTP + WebSocket session creation, background completion, isolation, rapid switching, independent drafts, refresh, reconnect, persisted model context, tool replay, error recovery, mobile layouts.');
+  console.log('PASS: real SSE model streaming, HTTP + WebSocket sessions, partial-answer refresh and switching, persisted answers without duplicates, fragmented tools, interruption recovery, incremental TCP output, mobile layouts.');
   console.log(`Artifacts: ${root}`);
   await stop();
 })().catch(error => { console.error(error); console.error(log); process.exitCode = 1; }).finally(async () => {

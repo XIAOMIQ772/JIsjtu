@@ -46,7 +46,23 @@ impl Session {
     pub fn emit(&mut self, event: Value) {
         self.record.revision += 1;
         self.record.updated_at = chrono::Utc::now().timestamp_millis();
-        self.record.events.push(event.clone());
+        // Snapshots keep one growing answer; subscribers receive only the new fragment.
+        let merged = match (self.record.events.last_mut(), event["type"].as_str()) {
+            (Some(previous), Some("answer_delta" | "answer"))
+                if previous["type"] == "answer_delta" =>
+            {
+                if event["type"] == "answer" {
+                    *previous = event.clone();
+                } else if let Some(Value::String(text)) = previous.get_mut("text") {
+                    text.push_str(event["text"].as_str().unwrap_or_default());
+                }
+                true
+            }
+            _ => false,
+        };
+        if !merged {
+            self.record.events.push(event.clone());
+        }
         let _ = self
             .tx
             .send(json!({"type": "session_event", "session": self.summary(), "event": event}));
@@ -262,6 +278,44 @@ pub fn dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn snapshots_accumulate_fragments_and_persist_one_final_answer() {
+        let root = std::env::temp_dir().join(format!(
+            "jisjtu-stream-session-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        let store = Store::new(root.clone());
+        let session = store.create().await.unwrap();
+        let mut session = session.lock().await;
+        let mut subscriber = session.tx.subscribe();
+        session.emit(json!({"type": "answer_delta", "text": "第一段"}));
+        session.emit(json!({"type": "answer_delta", "text": "，后续内容"}));
+        assert_eq!(subscriber.try_recv().unwrap()["event"]["text"], "第一段");
+        assert_eq!(
+            subscriber.try_recv().unwrap()["event"]["text"],
+            "，后续内容"
+        );
+        assert_eq!(
+            session.snapshot()["events"],
+            json!([{"type": "answer_delta", "text": "第一段，后续内容"}])
+        );
+        session.emit(json!({"type": "answer", "text": "第一段，后续内容"}));
+        store.persist(&mut session);
+        assert!(session.save_error.is_none());
+        let loaded = Store::new(root.clone())
+            .get(&session.record.id)
+            .await
+            .unwrap();
+        let loaded = loaded.lock().await;
+        assert_eq!(
+            loaded.record.events,
+            vec![json!({"type": "answer", "text": "第一段，后续内容"})]
+        );
+        assert_eq!(loaded.record.revision, 3);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[tokio::test]
     async fn isolated_sessions_survive_reload() {

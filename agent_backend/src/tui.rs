@@ -48,6 +48,8 @@ enum ChatEvent {
     User { text: String },
     #[serde(rename = "answer")]
     Answer { text: String },
+    #[serde(rename = "answer_delta")]
+    AnswerDelta { text: String },
     #[serde(rename = "tool_call")]
     ToolCall { name: String },
     #[serde(rename = "tool_result")]
@@ -147,12 +149,19 @@ impl App {
                 if self.ready && session.revision < current_revision {
                     return;
                 }
-                self.events = events;
+                self.events.clear();
+                for event in events {
+                    self.append_event(event);
+                }
+                let new_session =
+                    self.session.as_ref().map(|current| &current.id) != Some(&session.id);
                 self.session = Some(session);
                 self.ready = true;
                 self.sending = false;
                 self.status = save_error.unwrap_or_else(|| self.default_status().into());
-                self.follow_tail = true;
+                if new_session {
+                    self.follow_tail = true;
+                }
             }
             ServerMessage::SessionEvent { session, event } => {
                 let current_revision = self
@@ -168,7 +177,7 @@ impl App {
                     self.cursor = 0;
                     self.sending = false;
                 }
-                self.events.push(event);
+                self.append_event(event);
                 self.session = Some(session);
                 self.status = self.default_status().into();
             }
@@ -176,6 +185,18 @@ impl App {
                 self.sending = false;
                 self.status = text;
             }
+        }
+    }
+
+    fn append_event(&mut self, event: ChatEvent) {
+        match (self.events.last_mut(), &event) {
+            (Some(ChatEvent::AnswerDelta { text }), ChatEvent::AnswerDelta { text: delta }) => {
+                text.push_str(delta);
+            }
+            (Some(previous @ ChatEvent::AnswerDelta { .. }), ChatEvent::Answer { .. }) => {
+                *previous = event;
+            }
+            _ => self.events.push(event),
         }
     }
 
@@ -526,10 +547,7 @@ fn draw_history(frame: &mut Frame, app: &mut App, area: Rect) {
             Paragraph::new(Text::from(vec![
                 Line::from(""),
                 Line::default(),
-                Line::styled(
-                    "SPEAK it",
-                    Style::default().fg(MUTED),
-                ),
+                Line::styled("", Style::default().fg(MUTED)),
             ]))
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: false }),
@@ -639,16 +657,15 @@ fn history_text(events: &[ChatEvent]) -> Text<'static> {
             ChatEvent::User { text } => {
                 append_section(&mut lines, "你", text, Style::default().fg(MUTED))
             }
-            ChatEvent::Answer { text } => append_section(
+            ChatEvent::Answer { text } | ChatEvent::AnswerDelta { text } => append_section(
                 &mut lines,
                 "小集",
                 text,
                 Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
             ),
-            ChatEvent::ToolCall { name } => lines.push(Line::styled(
-                format!("{name}"),
-                Style::default().fg(MUTED),
-            )),
+            ChatEvent::ToolCall { name } => {
+                lines.push(Line::styled(format!("{name}"), Style::default().fg(MUTED)))
+            }
             ChatEvent::ToolResult => continue,
             ChatEvent::Error { text } => append_section(
                 &mut lines,
@@ -856,8 +873,69 @@ mod tests {
         }))
         .unwrap();
         let rendered = history_text(&[call, result]).to_string();
-        assert!(rendered.contains("工具 · read"));
+        assert!(rendered.contains("read"));
         assert!(!rendered.contains("secret"));
         assert!(!rendered.contains("完成"));
+    }
+
+    #[test]
+    fn streaming_answer_updates_one_message_and_deduplicates_revisions() {
+        let mut app = App::new();
+        app.connected = true;
+        app.apply(ServerMessage::SessionSnapshot {
+            session: session(1, true),
+            events: vec![],
+            save_error: None,
+        });
+        for (revision, text) in [(2, "第一段"), (2, "不应重复"), (3, "，后续内容")] {
+            app.apply(ServerMessage::SessionEvent {
+                session: session(revision, true),
+                event: ChatEvent::AnswerDelta { text: text.into() },
+            });
+        }
+        assert_eq!(app.events.len(), 1);
+        assert!(
+            history_text(&app.events)
+                .to_string()
+                .contains("第一段，后续内容")
+        );
+        app.apply(ServerMessage::SessionEvent {
+            session: session(4, true),
+            event: ChatEvent::Answer {
+                text: "第一段，后续内容".into(),
+            },
+        });
+        assert_eq!(app.events.len(), 1);
+        assert!(matches!(&app.events[0], ChatEvent::Answer { text } if text == "第一段，后续内容"));
+        app.follow_tail = false;
+        app.apply(ServerMessage::SessionSnapshot {
+            session: session(4, false),
+            events: app.events.clone(),
+            save_error: None,
+        });
+        assert!(
+            !app.follow_tail,
+            "a completed snapshot must not move the reader's scroll position"
+        );
+    }
+
+    #[test]
+    fn interrupted_stream_does_not_merge_with_the_next_answer() {
+        let mut app = App::new();
+        app.append_event(ChatEvent::AnswerDelta {
+            text: "部分回复".into(),
+        });
+        app.append_event(ChatEvent::Error {
+            text: "中断".into(),
+        });
+        app.append_event(ChatEvent::AnswerDelta {
+            text: "新的回复".into(),
+        });
+        app.append_event(ChatEvent::Answer {
+            text: "新的回复".into(),
+        });
+        assert_eq!(app.events.len(), 3);
+        assert!(matches!(&app.events[0], ChatEvent::AnswerDelta { text } if text == "部分回复"));
+        assert!(matches!(&app.events[2], ChatEvent::Answer { text } if text == "新的回复"));
     }
 }
