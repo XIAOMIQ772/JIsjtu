@@ -286,5 +286,42 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
             })),
             strict: Some(false),
         }),
+    }),
+    ChatCompletionTools::Function(ChatCompletionTool {
+        function: (FunctionObject {
+            name: "create_subagents".to_string(),
+            description: Some(
+                "将可独立完成的子任务并发分发给多个子 agent，等待全部完成后按输入顺序返回各自的结果或错误。\
+                 子 agent 可以使用其他工具，但不能再次创建子 agent。".to_string(),
+            ),
+            parameters: Some(json!({
+                "type":"object",
+                "properties":{
+                    "number":{
+                        "type":"integer",
+                        "minimum":1,
+                        "description":"需要创建的子 agent 数量，必须与 roles、tasks、messages 的长度一致"
+                    },
+                    "roles":{
+                        "type":"array",
+                        "description":"每个子 agent 的角色，按下标与任务、上下文一一对应",
+                        "items":{"type":"string","minLength":1}
+                    },
+                    "tasks":{
+                        "type":"array",
+                        "description":"每个子 agent 需要完成的具体任务",
+                        "items":{"type":"string","minLength":1}
+                    },
+                    "messages":{
+                        "type":"array",
+                        "description":"每个子 agent 应知晓的上下文，不需要上下文时该项填 null",
+                        "items":{"type":["string","null"]}
+                    }
+                },
+                "required":["number","roles","tasks","messages"],
+                "additionalProperties":false
+            })),
+            strict: Some(true),
+        }),
     })]
 }

@@ -546,7 +546,7 @@ fn history_text(events: &[ChatEvent]) -> Text<'static> {
                     .add_modifier(Modifier::BOLD),
             ),
             ChatEvent::ToolCall { name } => lines.push(Line::styled(
-                format!("工具 · {name}"),
+                format!("{name}"),
                 Style::default().fg(Color::Yellow),
             )),
             ChatEvent::ToolResult => continue,
