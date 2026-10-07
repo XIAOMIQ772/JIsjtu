@@ -12,11 +12,11 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 use serde::Deserialize;
 use serde_json::json;
-use std::{io, time::Duration};
+use std::{collections::HashMap, io, time::Duration};
 use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -39,6 +39,8 @@ struct SessionSummary {
     busy: bool,
     #[serde(default)]
     revision: u64,
+    #[serde(default)]
+    updated_at: i64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -78,16 +80,53 @@ enum ServerMessage {
         event: ChatEvent,
     },
     #[serde(rename = "request_error")]
-    RequestError { text: String },
+    RequestError {
+        session_id: Option<String>,
+        text: String,
+    },
     #[serde(rename = "session_error")]
-    SessionError { text: String },
+    SessionError {
+        session_id: Option<String>,
+        text: String,
+    },
 }
 
 #[derive(Debug)]
 enum NetworkEvent {
     Message(ServerMessage),
+    SessionList {
+        request_id: u64,
+        result: Result<Vec<SessionSummary>, String>,
+    },
     InvalidMessage(String),
     Disconnected(String),
+}
+
+#[derive(Default)]
+struct SessionPicker {
+    sessions: Vec<SessionSummary>,
+    selection: ListState,
+    request_id: u64,
+    loading: bool,
+    error: Option<String>,
+}
+
+struct SessionView {
+    input: String,
+    cursor: usize,
+    scroll: u16,
+    follow_tail: bool,
+}
+
+impl Default for SessionView {
+    fn default() -> Self {
+        Self {
+            input: String::new(),
+            cursor: 0,
+            scroll: 0,
+            follow_tail: true,
+        }
+    }
 }
 
 struct TerminalGuard;
@@ -113,6 +152,10 @@ impl Drop for TerminalGuard {
 #[derive(Default)]
 struct App {
     session: Option<SessionSummary>,
+    picker: Option<SessionPicker>,
+    pending_switch: Option<String>,
+    saved_views: HashMap<String, SessionView>,
+    list_request_id: u64,
     events: Vec<ChatEvent>,
     input: String,
     cursor: usize,
@@ -141,29 +184,39 @@ impl App {
                 events,
                 save_error,
             } => {
-                let current_revision = self
-                    .session
-                    .as_ref()
-                    .map(|current| current.revision)
-                    .unwrap_or_default();
-                if self.ready && session.revision < current_revision {
+                let same_session = self.is_current_session(&session.id);
+                let switch_confirmed = self.pending_switch.as_deref() == Some(&session.id);
+                if self.session.is_some() && !same_session && !switch_confirmed {
                     return;
+                }
+                if same_session
+                    && self.ready
+                    && session.revision < self.session.as_ref().unwrap().revision
+                {
+                    return;
+                }
+                if !same_session && self.session.is_some() {
+                    self.restore_view(&session.id);
                 }
                 self.events.clear();
                 for event in events {
                     self.append_event(event);
                 }
-                let new_session =
-                    self.session.as_ref().map(|current| &current.id) != Some(&session.id);
+                self.update_picker_session(&session);
                 self.session = Some(session);
+                if switch_confirmed {
+                    self.pending_switch = None;
+                    self.picker = None;
+                }
                 self.ready = true;
                 self.sending = false;
                 self.status = save_error.unwrap_or_else(|| self.default_status().into());
-                if new_session {
-                    self.follow_tail = true;
-                }
             }
             ServerMessage::SessionEvent { session, event } => {
+                // Revisions are local to a session. Late events must not enter another chat.
+                if !self.is_current_session(&session.id) {
+                    return;
+                }
                 let current_revision = self
                     .session
                     .as_ref()
@@ -178,13 +231,121 @@ impl App {
                     self.sending = false;
                 }
                 self.append_event(event);
+                self.update_picker_session(&session);
                 self.session = Some(session);
                 self.status = self.default_status().into();
             }
-            ServerMessage::RequestError { text } | ServerMessage::SessionError { text } => {
-                self.sending = false;
-                self.status = text;
+            ServerMessage::RequestError { session_id, text } => {
+                if session_id
+                    .as_deref()
+                    .is_none_or(|id| self.is_current_session(id))
+                {
+                    self.sending = false;
+                    self.status = text;
+                }
             }
+            ServerMessage::SessionError { session_id, text } => {
+                if self.pending_switch.is_some()
+                    && (session_id.is_none() || session_id == self.pending_switch)
+                {
+                    self.pending_switch = None;
+                    if let Some(picker) = &mut self.picker {
+                        picker.error = Some(text.clone());
+                    }
+                    self.status = text;
+                } else if session_id
+                    .as_deref()
+                    .is_none_or(|id| self.is_current_session(id))
+                {
+                    self.sending = false;
+                    self.status = text;
+                }
+            }
+        }
+    }
+
+    fn is_current_session(&self, id: &str) -> bool {
+        self.session
+            .as_ref()
+            .is_some_and(|session| session.id == id)
+    }
+
+    fn restore_view(&mut self, id: &str) {
+        if let Some(current) = &self.session {
+            self.saved_views.insert(
+                current.id.clone(),
+                SessionView {
+                    input: std::mem::take(&mut self.input),
+                    cursor: self.cursor,
+                    scroll: self.scroll,
+                    follow_tail: self.follow_tail,
+                },
+            );
+        }
+        let view = self.saved_views.remove(id).unwrap_or_default();
+        self.input = view.input;
+        self.cursor = view.cursor;
+        self.scroll = view.scroll;
+        self.follow_tail = view.follow_tail;
+    }
+
+    fn update_picker_session(&mut self, summary: &SessionSummary) {
+        if let Some(picker) = &mut self.picker {
+            if let Some(item) = picker
+                .sessions
+                .iter_mut()
+                .find(|item| item.id == summary.id)
+            {
+                *item = summary.clone();
+            }
+        }
+    }
+
+    fn request_sessions(&mut self, requests: &mpsc::UnboundedSender<u64>) {
+        self.list_request_id += 1;
+        let picker = self.picker.get_or_insert_with(SessionPicker::default);
+        picker.request_id = self.list_request_id;
+        picker.error = None;
+        picker.loading = true;
+        if requests.send(picker.request_id).is_err() {
+            picker.loading = false;
+            picker.error = Some("会话列表连接已关闭".into());
+        }
+    }
+
+    fn receive_sessions(&mut self, request_id: u64, result: Result<Vec<SessionSummary>, String>) {
+        let Some(picker) = &mut self.picker else {
+            return;
+        };
+        if picker.request_id != request_id {
+            return;
+        }
+        picker.loading = false;
+        match result {
+            Ok(mut sessions) => {
+                let selected_id = picker
+                    .selection
+                    .selected()
+                    .and_then(|index| picker.sessions.get(index))
+                    .map(|session| session.id.as_str())
+                    .or_else(|| self.session.as_ref().map(|session| session.id.as_str()));
+                if let Some(current) = &self.session {
+                    if let Some(item) = sessions.iter_mut().find(|item| item.id == current.id) {
+                        if current.revision >= item.revision {
+                            *item = current.clone();
+                        }
+                    }
+                }
+                sessions.sort_by_key(|session| std::cmp::Reverse(session.updated_at));
+                let selected = sessions
+                    .iter()
+                    .position(|session| Some(session.id.as_str()) == selected_id)
+                    .or_else(|| (!sessions.is_empty()).then_some(0));
+                picker.selection.select(selected);
+                picker.sessions = sessions;
+                picker.error = None;
+            }
+            Err(error) => picker.error = Some(error),
         }
     }
 
@@ -203,7 +364,7 @@ impl App {
     fn default_status(&self) -> &'static str {
         if !self.connected {
             "unconnect"
-        } else if !self.ready {
+        } else if !self.ready || self.pending_switch.is_some() {
             "syncing"
         } else if self.sending {
             "sending"
@@ -224,6 +385,8 @@ impl App {
     fn can_send(&self) -> bool {
         self.connected
             && self.ready
+            && self.picker.is_none()
+            && self.pending_switch.is_none()
             && !self.is_busy()
             && !self.sending
             && !self.input.trim().is_empty()
@@ -265,6 +428,10 @@ impl App {
 }
 
 pub async fn run(http_port: u16) -> anyhow::Result<()> {
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(10))
+        .build()?;
     let url = format!("ws://127.0.0.1:{http_port}/ws");
     let socket = {
         let mut attempts = 0;
@@ -284,6 +451,22 @@ pub async fn run(http_port: u16) -> anyhow::Result<()> {
     let (mut writer, mut reader) = socket.split();
     let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded_channel::<Message>();
     let (network_tx, mut network_rx) = mpsc::unbounded_channel::<NetworkEvent>();
+    let (list_tx, mut list_rx) = mpsc::unbounded_channel::<u64>();
+    let list_network_tx = network_tx.clone();
+
+    let list_task = tokio::spawn(async move {
+        while let Some(request_id) = list_rx.recv().await {
+            let result = fetch_sessions(&http, http_port)
+                .await
+                .map_err(|error| format!("{error:#}"));
+            if list_network_tx
+                .send(NetworkEvent::SessionList { request_id, result })
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
 
     let writer_task = tokio::spawn(async move {
         while let Some(message) = outgoing_rx.recv().await {
@@ -330,22 +513,45 @@ pub async fn run(http_port: u16) -> anyhow::Result<()> {
     terminal.clear()?;
     let mut app = App::new();
     app.connected = true;
-    let result = event_loop(&mut terminal, &mut app, &outgoing_tx, &mut network_rx).await;
+    let result = event_loop(
+        &mut terminal,
+        &mut app,
+        &outgoing_tx,
+        &list_tx,
+        &mut network_rx,
+    )
+    .await;
 
     drop(outgoing_tx);
+    drop(list_tx);
     writer_task.abort();
     reader_task.abort();
+    list_task.abort();
     let _ = writer_task.await;
     let _ = reader_task.await;
+    let _ = list_task.await;
     drop(terminal);
     drop(guard);
     result
+}
+
+async fn fetch_sessions(http: &reqwest::Client, port: u16) -> anyhow::Result<Vec<SessionSummary>> {
+    http.get(format!("http://127.0.0.1:{port}/api/sessions"))
+        .send()
+        .await
+        .context("无法读取会话列表")?
+        .error_for_status()
+        .context("读取会话列表失败")?
+        .json()
+        .await
+        .context("会话列表格式错误")
 }
 
 async fn event_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
     outgoing: &mpsc::UnboundedSender<Message>,
+    list_requests: &mpsc::UnboundedSender<u64>,
     network: &mut mpsc::UnboundedReceiver<NetworkEvent>,
 ) -> anyhow::Result<()> {
     while !app.should_quit {
@@ -354,6 +560,9 @@ async fn event_loop(
         while let Ok(event) = network.try_recv() {
             match event {
                 NetworkEvent::Message(message) => app.apply(message),
+                NetworkEvent::SessionList { request_id, result } => {
+                    app.receive_sessions(request_id, result);
+                }
                 NetworkEvent::InvalidMessage(error) => {
                     app.status = format!("收到无法解析的消息：{error}");
                 }
@@ -361,6 +570,11 @@ async fn event_loop(
                     app.connected = false;
                     app.ready = false;
                     app.sending = false;
+                    app.pending_switch = None;
+                    if let Some(picker) = &mut app.picker {
+                        picker.loading = false;
+                        picker.error = Some(reason.clone());
+                    }
                     app.status = reason;
                 }
             }
@@ -369,7 +583,7 @@ async fn event_loop(
         if event::poll(EVENT_POLL_INTERVAL)? {
             match event::read()? {
                 TerminalEvent::Key(key) if key.kind == KeyEventKind::Press => {
-                    handle_key(app, key, outgoing)?;
+                    handle_key(app, key, outgoing, list_requests)?;
                 }
                 TerminalEvent::Resize(_, _) => {}
                 _ => {}
@@ -383,15 +597,20 @@ fn handle_key(
     app: &mut App,
     key: KeyEvent,
     outgoing: &mpsc::UnboundedSender<Message>,
+    list_requests: &mpsc::UnboundedSender<u64>,
 ) -> anyhow::Result<()> {
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         app.should_quit = true;
         return Ok(());
     }
+    if app.picker.is_some() {
+        handle_picker_key(app, key, outgoing, list_requests);
+        return Ok(());
+    }
 
     match key.code {
         KeyCode::Esc => app.should_quit = true,
-        KeyCode::Enter => send_input(app, outgoing)?,
+        KeyCode::Enter => send_input(app, outgoing, list_requests)?,
         KeyCode::Char(character) => app.insert(character),
         KeyCode::Backspace => app.backspace(),
         KeyCode::Delete => app.delete(),
@@ -408,7 +627,94 @@ fn handle_key(
     Ok(())
 }
 
-fn send_input(app: &mut App, outgoing: &mpsc::UnboundedSender<Message>) -> anyhow::Result<()> {
+fn handle_picker_key(
+    app: &mut App,
+    key: KeyEvent,
+    outgoing: &mpsc::UnboundedSender<Message>,
+    list_requests: &mpsc::UnboundedSender<u64>,
+) {
+    if app.pending_switch.is_some() {
+        return;
+    }
+    match key.code {
+        KeyCode::Esc => app.picker = None,
+        KeyCode::Enter => switch_selected_session(app, outgoing),
+        KeyCode::Char('r') if app.connected && !app.picker.as_ref().unwrap().loading => {
+            app.request_sessions(list_requests);
+        }
+        _ => {
+            let picker = app.picker.as_mut().unwrap();
+            if picker.loading || picker.sessions.is_empty() {
+                return;
+            }
+            let selected = picker.selection.selected().unwrap_or(0);
+            let last = picker.sessions.len() - 1;
+            let next = match key.code {
+                KeyCode::Up => selected.saturating_sub(1),
+                KeyCode::Down => selected.saturating_add(1).min(last),
+                KeyCode::PageUp => selected.saturating_sub(5),
+                KeyCode::PageDown => selected.saturating_add(5).min(last),
+                KeyCode::Home => 0,
+                KeyCode::End => last,
+                _ => return,
+            };
+            picker.selection.select(Some(next));
+        }
+    }
+}
+
+fn switch_selected_session(app: &mut App, outgoing: &mpsc::UnboundedSender<Message>) {
+    let Some(id) = app
+        .picker
+        .as_ref()
+        .filter(|picker| !picker.loading)
+        .and_then(|picker| {
+            picker
+                .selection
+                .selected()
+                .and_then(|index| picker.sessions.get(index))
+        })
+        .map(|session| session.id.clone())
+    else {
+        return;
+    };
+    if app.is_current_session(&id) {
+        app.picker = None;
+        return;
+    }
+    if !app.connected || !app.ready || app.sending {
+        app.picker.as_mut().unwrap().error = Some("连接尚未就绪，请稍后再试".into());
+        return;
+    }
+    let payload = json!({ "type": "switch_session", "session_id": id });
+    if outgoing
+        .send(Message::Text(payload.to_string().into()))
+        .is_err()
+    {
+        app.picker.as_mut().unwrap().error = Some("WebSocket 写入通道已关闭".into());
+        return;
+    }
+    app.pending_switch = Some(id);
+    app.picker.as_mut().unwrap().error = None;
+    app.status = app.default_status().into();
+}
+
+fn send_input(
+    app: &mut App,
+    outgoing: &mpsc::UnboundedSender<Message>,
+    list_requests: &mpsc::UnboundedSender<u64>,
+) -> anyhow::Result<()> {
+    // Local commands remain available while the model is streaming.
+    if app.input.trim() == "/sessions" {
+        if app.connected && app.ready && !app.sending && app.pending_switch.is_none() {
+            app.input.clear();
+            app.cursor = 0;
+            app.request_sessions(list_requests);
+        } else {
+            app.status = app.default_status().into();
+        }
+        return Ok(());
+    }
     if !app.can_send() {
         app.status = if app.input.trim().is_empty() {
             "send your message".into()
@@ -444,6 +750,10 @@ fn draw(frame: &mut Frame, app: &mut App) {
                 .wrap(Wrap { trim: false }),
             area,
         );
+        return;
+    }
+    if app.picker.is_some() {
+        draw_session_picker(frame, app, area);
         return;
     }
 
@@ -484,6 +794,118 @@ fn draw(frame: &mut Frame, app: &mut App) {
     }
     draw_input(frame, app, areas[3]);
     draw_help(frame, app, areas[4]);
+}
+
+fn draw_session_picker(frame: &mut Frame, app: &mut App, area: Rect) {
+    let current_id = app.session.as_ref().map(|session| session.id.as_str());
+    let switching = app.pending_switch.is_some();
+    let picker = app.picker.as_mut().unwrap();
+    let notice = if switching {
+        "正在打开会话…"
+    } else if picker.loading {
+        "正在读取会话…"
+    } else if let Some(error) = &picker.error {
+        error.as_str()
+    } else {
+        "选择一个会话，继续之前的对话。"
+    };
+    let notice_height = visual_line_count(notice, area.width).clamp(1, 3) + 1;
+    let areas = Layout::vertical([
+        Constraint::Length(2),
+        Constraint::Length(notice_height),
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .split(area);
+    let heading = Layout::horizontal([Constraint::Min(0), Constraint::Length(10)]).split(Rect {
+        height: 1,
+        ..areas[0]
+    });
+    let title = if heading[0].width >= 20 {
+        Line::from(vec![
+            Span::styled("JIsjtu", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled("  /  会话", Style::default().fg(MUTED)),
+        ])
+    } else {
+        Line::styled("会话", Style::default().add_modifier(Modifier::BOLD))
+    };
+    frame.render_widget(Paragraph::new(title), heading[0]);
+    frame.render_widget(
+        Paragraph::new(format!("{} 个会话", picker.sessions.len()))
+            .alignment(Alignment::Right)
+            .style(Style::default().fg(MUTED)),
+        heading[1],
+    );
+    frame.render_widget(
+        Paragraph::new(notice)
+            .style(Style::default().fg(if picker.error.is_some() { ERROR } else { MUTED }))
+            .wrap(Wrap { trim: false }),
+        areas[1],
+    );
+
+    let items: Vec<_> = picker
+        .sessions
+        .iter()
+        .map(|session| {
+            let title = if session.title.trim().is_empty() {
+                "新的对话"
+            } else {
+                &session.title
+            };
+            let mut detail = Vec::new();
+            if Some(session.id.as_str()) == current_id {
+                detail.push("当前".to_string());
+            }
+            if session.busy {
+                detail.push("处理中".to_string());
+            }
+            if let Some(time) = chrono::DateTime::from_timestamp_millis(session.updated_at) {
+                detail.push(
+                    time.with_timezone(&chrono::Local)
+                        .format(if area.width < 40 {
+                            "%m-%d"
+                        } else {
+                            "%m-%d %H:%M"
+                        })
+                        .to_string(),
+                );
+            }
+            ListItem::new(vec![
+                Line::raw(title.replace(['\n', '\r', '\t'], " ")),
+                Line::styled(detail.join(" · "), Style::default().fg(MUTED)),
+                Line::default(),
+            ])
+        })
+        .collect();
+    if items.is_empty() && !picker.loading && picker.error.is_none() {
+        frame.render_widget(
+            Paragraph::new("暂无已保存的会话").style(Style::default().fg(MUTED)),
+            areas[2],
+        );
+    } else {
+        frame.render_stateful_widget(
+            List::new(items)
+                .highlight_symbol("› ")
+                .highlight_style(Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
+            areas[2],
+            &mut picker.selection,
+        );
+    }
+    let hint = if switching {
+        "正在同步会话…"
+    } else if area.width < 30 && picker.error.is_some() {
+        "r 刷新  Esc 返回"
+    } else if area.width < 30 {
+        "↑↓  ↵ 打开  Esc 返回"
+    } else if area.width < 40 {
+        "↑↓ 选择  ↵ 打开  Esc 返回"
+    } else {
+        "↑↓ 选择   Enter 打开   Esc 返回   r 刷新"
+    };
+    frame.render_widget(
+        Paragraph::new(hint).style(Style::default().fg(MUTED)),
+        areas[3],
+    );
 }
 
 fn content_area(area: Rect) -> Rect {
@@ -623,13 +1045,27 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
-    let hint = if area.width < 32 {
-        "↵ 发送  Esc 退出"
+    let history_width = if !app.follow_tail && area.width >= 48 {
+        10
     } else {
-        "Enter 发送   ↑↓ 滚动   Esc 退出"
+        0
     };
-    frame.render_widget(Paragraph::new(hint).style(Style::default().fg(MUTED)), area);
-    if !app.follow_tail && area.width >= 48 {
+    let hint_area = Rect {
+        width: area.width.saturating_sub(history_width),
+        ..area
+    };
+    let hint = if hint_area.width < 32 {
+        "↵ 发送  /sessions"
+    } else if hint_area.width < 52 {
+        "↵ 发送  /sessions 会话  Esc 退出"
+    } else {
+        "Enter 发送   ↑↓ 滚动   /sessions 会话   Esc 退出"
+    };
+    frame.render_widget(
+        Paragraph::new(hint).style(Style::default().fg(MUTED)),
+        hint_area,
+    );
+    if history_width > 0 {
         frame.render_widget(
             Paragraph::new("查看历史")
                 .alignment(Alignment::Right)
@@ -773,6 +1209,298 @@ mod tests {
             title: "测试".into(),
             busy,
             revision,
+            ..SessionSummary::default()
+        }
+    }
+
+    fn ready_app(revision: u64, busy: bool) -> App {
+        let mut app = App::new();
+        app.connected = true;
+        app.apply(ServerMessage::SessionSnapshot {
+            session: session(revision, busy),
+            events: vec![],
+            save_error: None,
+        });
+        app
+    }
+
+    fn load_picker(app: &mut App, sessions: Vec<SessionSummary>) {
+        let (requests, mut received) = mpsc::unbounded_channel();
+        app.request_sessions(&requests);
+        app.receive_sessions(received.try_recv().unwrap(), Ok(sessions));
+    }
+
+    #[test]
+    fn sessions_command_opens_while_streaming_without_sending_to_model() {
+        let mut app = ready_app(10, true);
+        app.input = " /sessions ".into();
+        app.cursor = app.input.chars().count();
+        app.scroll = 12;
+        app.follow_tail = false;
+        let (outgoing, mut messages) = mpsc::unbounded_channel();
+        let (requests, mut list_requests) = mpsc::unbounded_channel();
+        send_input(&mut app, &outgoing, &requests).unwrap();
+        assert!(messages.try_recv().is_err());
+        assert!(app.picker.as_ref().unwrap().loading);
+        assert!(app.input.is_empty());
+        assert!(app.events.is_empty());
+        app.receive_sessions(
+            list_requests.try_recv().unwrap(),
+            Ok(vec![session(10, true)]),
+        );
+        assert_eq!(app.picker.as_ref().unwrap().selection.selected(), Some(0));
+        app.apply(ServerMessage::SessionEvent {
+            session: session(11, true),
+            event: ChatEvent::AnswerDelta {
+                text: "持续生成".into(),
+            },
+        });
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            &outgoing,
+            &requests,
+        )
+        .unwrap();
+        assert!(app.picker.is_none());
+        assert!(!app.should_quit);
+        assert_eq!(app.scroll, 12);
+        assert!(!app.follow_tail);
+        assert!(history_text(&app.events).to_string().contains("持续生成"));
+    }
+
+    #[test]
+    fn switching_waits_for_target_snapshot_and_restores_each_sessions_view() {
+        let mut app = ready_app(30, false);
+        app.input = "尚未发送的草稿".into();
+        app.cursor = 3;
+        app.scroll = 7;
+        app.follow_tail = false;
+        let other = SessionSummary {
+            id: "session-2".into(),
+            title: "另一个会话".into(),
+            ..session(1, false)
+        };
+        load_picker(&mut app, vec![session(30, false), other.clone()]);
+        let (outgoing, mut messages) = mpsc::unbounded_channel();
+        let (requests, _) = mpsc::unbounded_channel();
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+            &outgoing,
+            &requests,
+        )
+        .unwrap();
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &outgoing,
+            &requests,
+        )
+        .unwrap();
+        let request: serde_json::Value =
+            serde_json::from_str(messages.try_recv().unwrap().to_text().unwrap()).unwrap();
+        assert_eq!(
+            request,
+            json!({"type": "switch_session", "session_id": "session-2"})
+        );
+        assert!(!app.can_send());
+        assert!(app.is_current_session("session-1"));
+
+        // An old session's final snapshot may arrive before the switch acknowledgment.
+        app.apply(ServerMessage::SessionSnapshot {
+            session: session(40, false),
+            events: vec![ChatEvent::Answer {
+                text: "原会话".into(),
+            }],
+            save_error: None,
+        });
+        assert!(app.picker.is_some());
+        assert_eq!(app.pending_switch.as_deref(), Some("session-2"));
+        app.apply(ServerMessage::SessionSnapshot {
+            session: other.clone(),
+            events: vec![ChatEvent::Answer {
+                text: "另一个会话的内容".into(),
+            }],
+            save_error: None,
+        });
+        assert!(app.is_current_session("session-2"));
+        assert!(app.picker.is_none());
+        assert!(app.pending_switch.is_none());
+        assert!(app.input.is_empty());
+        assert!(app.follow_tail);
+
+        app.apply(ServerMessage::SessionEvent {
+            session: session(41, true),
+            event: ChatEvent::AnswerDelta {
+                text: "过期片段".into(),
+            },
+        });
+        app.apply(ServerMessage::SessionSnapshot {
+            session: session(42, false),
+            events: vec![],
+            save_error: None,
+        });
+        assert!(app.is_current_session("session-2"));
+        assert_eq!(app.events.len(), 1);
+        assert!(
+            history_text(&app.events)
+                .to_string()
+                .contains("另一个会话的内容")
+        );
+
+        app.input = "在新会话提问".into();
+        assert!(app.can_send());
+        send_input(&mut app, &outgoing, &requests).unwrap();
+        let request: serde_json::Value =
+            serde_json::from_str(messages.try_recv().unwrap().to_text().unwrap()).unwrap();
+        assert_eq!(request["session_id"], "session-2");
+        assert_eq!(request["type"], "user");
+        app.apply(ServerMessage::SessionEvent {
+            session: SessionSummary {
+                revision: 2,
+                ..other.clone()
+            },
+            event: ChatEvent::User {
+                text: "在新会话提问".into(),
+            },
+        });
+        app.input = "另一个草稿".into();
+        app.cursor = 2;
+        load_picker(&mut app, vec![session(40, false), other]);
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
+            &outgoing,
+            &requests,
+        )
+        .unwrap();
+        switch_selected_session(&mut app, &outgoing);
+        app.apply(ServerMessage::SessionSnapshot {
+            session: session(40, false),
+            events: vec![],
+            save_error: None,
+        });
+        assert!(app.is_current_session("session-1"));
+        assert_eq!(app.input, "尚未发送的草稿");
+        assert_eq!(app.cursor, 3);
+        assert_eq!(app.scroll, 7);
+        assert!(!app.follow_tail);
+        assert_eq!(app.saved_views["session-2"].input, "另一个草稿");
+        assert_eq!(app.saved_views["session-2"].cursor, 2);
+    }
+
+    #[test]
+    fn failed_switch_keeps_original_chat_and_allows_cancel() {
+        let mut app = ready_app(4, false);
+        app.input = "保留内容".into();
+        let other = SessionSummary {
+            id: "missing-session".into(),
+            ..session(1, false)
+        };
+        load_picker(&mut app, vec![other]);
+        let (outgoing, _messages) = mpsc::unbounded_channel();
+        let (requests, _) = mpsc::unbounded_channel();
+        switch_selected_session(&mut app, &outgoing);
+        app.apply(ServerMessage::SessionError {
+            session_id: Some("missing-session".into()),
+            text: "会话不存在".into(),
+        });
+        assert!(app.pending_switch.is_none());
+        assert_eq!(
+            app.picker.as_ref().unwrap().error.as_deref(),
+            Some("会话不存在")
+        );
+        assert!(app.is_current_session("session-1"));
+        assert_eq!(app.input, "保留内容");
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            &outgoing,
+            &requests,
+        )
+        .unwrap();
+        assert!(!app.should_quit);
+        assert!(app.can_send());
+    }
+
+    #[test]
+    fn picker_ignores_cancelled_requests_and_can_retry_loading_errors() {
+        let mut app = ready_app(1, false);
+        let (outgoing, mut messages) = mpsc::unbounded_channel();
+        let (requests, mut list_requests) = mpsc::unbounded_channel();
+        app.request_sessions(&requests);
+        let cancelled_id = list_requests.try_recv().unwrap();
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            &outgoing,
+            &requests,
+        )
+        .unwrap();
+        app.request_sessions(&requests);
+        let active_id = list_requests.try_recv().unwrap();
+        app.receive_sessions(cancelled_id, Ok(vec![session(1, false)]));
+        assert!(app.picker.as_ref().unwrap().loading);
+        app.receive_sessions(active_id, Err("暂时无法读取".into()));
+        assert!(!app.picker.as_ref().unwrap().loading);
+        assert!(app.picker.as_ref().unwrap().error.is_some());
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE),
+            &outgoing,
+            &requests,
+        )
+        .unwrap();
+        app.receive_sessions(list_requests.try_recv().unwrap(), Ok(vec![]));
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &outgoing,
+            &requests,
+        )
+        .unwrap();
+        assert!(app.picker.as_ref().unwrap().sessions.is_empty());
+        assert!(app.pending_switch.is_none());
+        assert!(messages.try_recv().is_err());
+    }
+
+    #[test]
+    fn picker_is_a_separate_scrollable_screen_at_different_terminal_sizes() {
+        use ratatui::backend::TestBackend;
+        let mut app = ready_app(1, false);
+        app.events.push(ChatEvent::Answer {
+            text: "聊天内容不应出现在选择界面".into(),
+        });
+        let sessions = (0..30)
+            .map(|index| SessionSummary {
+                id: format!("saved-{index}"),
+                title: format!("已保存会话{index:02}"),
+                updated_at: index,
+                ..session(1, false)
+            })
+            .collect();
+        load_picker(&mut app, sessions);
+        app.picker.as_mut().unwrap().selection.select(Some(29));
+        for (width, height) in [(80, 24), (42, 12), (24, 10)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+            let rendered: String = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
+            // Wide characters leave a padding cell in the test buffer.
+            let compact: String = rendered.split_whitespace().collect();
+            assert!(
+                compact.contains("已保存会话00"),
+                "{width}x{height}: {rendered}"
+            );
+            assert!(compact.contains("Esc返回"), "{width}x{height}: {rendered}");
+            assert!(!compact.contains("聊天内容不应出现在选择界面"));
+            assert!(app.picker.as_ref().unwrap().selection.offset() > 0);
         }
     }
 
