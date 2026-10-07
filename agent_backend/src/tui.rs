@@ -1,4 +1,3 @@
-use std::{io, time::Duration};
 use anyhow::Context;
 use crossterm::{
     cursor::{Hide, Show},
@@ -10,18 +9,25 @@ use futures_util::{SinkExt, StreamExt};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 use serde::Deserialize;
 use serde_json::json;
+use std::{io, time::Duration};
 use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-const INPUT_MIN_HEIGHT: u16 = 3;
+const INPUT_MIN_HEIGHT: u16 = 4;
+const INPUT_MAX_HEIGHT: u16 = 8;
+const CONTENT_MAX_WIDTH: u16 = 96;
+const ACCENT: Color = Color::Rgb(132, 161, 174);
+const MUTED: Color = Color::Indexed(245);
+const SEPARATOR: Color = Color::Indexed(239);
+const ERROR: Color = Color::Rgb(196, 120, 120);
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -121,7 +127,7 @@ impl App {
     fn new() -> Self {
         Self {
             follow_tail: true,
-            status: "正在连接后端…".into(),
+            status: "同步中".into(),
             ..Self::default()
         }
     }
@@ -175,11 +181,13 @@ impl App {
 
     fn default_status(&self) -> &'static str {
         if !self.connected {
-            "connection broken"
+            "unconnect"
         } else if !self.ready {
-            "syncing sessions now"
+            "syncing"
+        } else if self.sending {
+            "sending"
         } else if self.is_busy() {
-            "processing"
+            "addressing"
         } else {
             "ready"
         }
@@ -382,7 +390,7 @@ fn handle_key(
 fn send_input(app: &mut App, outgoing: &mpsc::UnboundedSender<Message>) -> anyhow::Result<()> {
     if !app.can_send() {
         app.status = if app.input.trim().is_empty() {
-            "请输入消息".into()
+            "send your message".into()
         } else {
             app.default_status().into()
         };
@@ -402,63 +410,140 @@ fn send_input(app: &mut App, outgoing: &mpsc::UnboundedSender<Message>) -> anyho
         .send(Message::Text(payload.to_string().into()))
         .context("WebSocket 写入通道已关闭")?;
     app.sending = true;
-    app.status = "正在发送…".into();
+    app.status = app.default_status().into();
     Ok(())
 }
 
 fn draw(frame: &mut Frame, app: &mut App) {
-    let input_height = input_height(&app.input, frame.area());
+    let area = content_area(frame.area());
+    if area.width < 20 || area.height < 8 {
+        frame.render_widget(
+            Paragraph::new("请放大终端窗口")
+                .style(Style::default().fg(MUTED))
+                .wrap(Wrap { trim: false }),
+            area,
+        );
+        return;
+    }
+
+    let notice_height = if !app.status.is_empty() && app.status != app.default_status() {
+        visual_line_count(&app.status, area.width)
+            .min(3)
+            .min(area.height.saturating_sub(8))
+    } else {
+        0
+    };
+    let input_height = input_height(
+        &app.input,
+        Rect {
+            height: area.height.saturating_sub(notice_height),
+            ..area
+        },
+    );
     let areas = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
-            Constraint::Min(3),
+            Constraint::Length(2),
+            Constraint::Min(1),
+            Constraint::Length(notice_height),
             Constraint::Length(input_height),
             Constraint::Length(1),
         ])
-        .split(frame.area());
+        .split(area);
 
     draw_header(frame, app, areas[0]);
     draw_history(frame, app, areas[1]);
-    draw_input(frame, app, areas[2]);
-    draw_help(frame, app, areas[3]);
+    if notice_height > 0 {
+        frame.render_widget(
+            Paragraph::new(app.status.as_str())
+                .style(Style::default().fg(ERROR))
+                .wrap(Wrap { trim: false }),
+            areas[2],
+        );
+    }
+    draw_input(frame, app, areas[3]);
+    draw_help(frame, app, areas[4]);
+}
+
+fn content_area(area: Rect) -> Rect {
+    let horizontal_margin = if area.width >= 60 { 3 } else { 1 };
+    let vertical_margin = if area.height >= 12 { 1 } else { 0 };
+    let width = area
+        .width
+        .saturating_sub(horizontal_margin * 2)
+        .min(CONTENT_MAX_WIDTH);
+    Rect::new(
+        area.x + area.width.saturating_sub(width) / 2,
+        area.y + vertical_margin,
+        width,
+        area.height.saturating_sub(vertical_margin * 2),
+    )
 }
 
 fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
-    let connection = if app.connected {
-        "connecting"
-    } else {
-        "break"
-    };
     let title = app
         .session
         .as_ref()
         .map(|session| session.title.as_str())
-        .filter(|title| !title.is_empty())
-        .unwrap_or("new session");
-    let status_color = if app.connected {
-        Color::Green
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or("新的对话")
+        .replace(['\n', '\r'], " ");
+    let status_color = if !app.connected {
+        ERROR
+    } else if app.is_busy() || app.sending {
+        ACCENT
     } else {
-        Color::Red
+        MUTED
     };
-    let line = Line::from(vec![
-        Span::styled(" JIsjtu ", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(format!("{title}  ")),
-        Span::styled(connection, Style::default().fg(status_color)),
-        Span::raw(format!("  {}", app.status)),
-    ]);
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(0), Constraint::Length(8)])
+        .split(Rect { height: 1, ..area });
+    let mut heading = vec![Span::styled(
+        "JIsjtu",
+        Style::default().add_modifier(Modifier::BOLD),
+    )];
+    if columns[0].width >= 22 {
+        heading.push(Span::styled(
+            format!("  /  {title}"),
+            Style::default().fg(MUTED),
+        ));
+    }
+    frame.render_widget(Paragraph::new(Line::from(heading)), columns[0]);
     frame.render_widget(
-        Paragraph::new(line).block(Block::default().borders(Borders::BOTTOM)),
-        area,
+        Paragraph::new(app.default_status())
+            .style(Style::default().fg(status_color))
+            .alignment(Alignment::Right),
+        columns[1],
     );
 }
 
 fn draw_history(frame: &mut Frame, app: &mut App, area: Rect) {
     let text = history_text(&app.events);
-    let width = area.width.saturating_sub(2).max(1);
-    let content_height = wrapped_height(&text, width);
-    let viewport_height = area.height.saturating_sub(2);
-    let max_scroll = content_height.saturating_sub(viewport_height);
+    if text.lines.is_empty() {
+        let top = area.height.saturating_sub(4) / 3;
+        frame.render_widget(
+            Paragraph::new(Text::from(vec![
+                Line::from(""),
+                Line::default(),
+                Line::styled(
+                    "SPEAK it",
+                    Style::default().fg(MUTED),
+                ),
+            ]))
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: false }),
+            Rect {
+                y: area.y + top,
+                height: area.height.saturating_sub(top),
+                ..area
+            },
+        );
+        return;
+    }
+
+    let content_height = wrapped_height(&text, area.width.max(1));
+    let max_scroll = content_height.saturating_sub(area.height);
     if app.follow_tail {
         app.scroll = max_scroll;
     } else {
@@ -466,99 +551,114 @@ fn draw_history(frame: &mut Frame, app: &mut App, area: Rect) {
         app.follow_tail = app.scroll >= max_scroll;
     }
     let history = Paragraph::new(text)
-        .block(Block::default().borders(Borders::ALL).title(" session "))
         .wrap(Wrap { trim: false })
         .scroll((app.scroll, 0));
     frame.render_widget(history, area);
 }
 
 fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
-    let title = if app.is_busy() {
-        " input (analysing) "
-    } else {
-        " input "
-    };
     let inner_width = area.width.saturating_sub(2).max(1);
-    let visible_rows = area.height.saturating_sub(2).max(1);
+    let visible_rows = area.height.saturating_sub(3).max(1);
+    let inner = Rect::new(area.x + 2, area.y + 2, inner_width, visible_rows);
     let before_cursor: String = app.input.chars().take(app.cursor).collect();
     let (cursor_row, cursor_column) = cursor_position(&before_cursor, inner_width);
     let input_scroll = cursor_row.saturating_sub(visible_rows.saturating_sub(1));
     let display_text = if app.input.is_empty() {
         Text::styled(
-            "   input your instructions",
-            Style::default().fg(Color::DarkGray),
+            if app.is_busy() {
+                "addressing，could send your next message in advance…"
+            } else {
+                "input message…"
+            },
+            Style::default().fg(MUTED),
         )
     } else {
-        Text::raw(app.input.as_str())
+        Text::from(
+            wrap_input(&app.input, inner_width)
+                .into_iter()
+                .map(Line::raw)
+                .collect::<Vec<_>>(),
+        )
     };
 
-    let input = Paragraph::new(display_text)
-        .block(Block::default().borders(Borders::ALL).title(title))
-        .wrap(Wrap { trim: false })
-        .scroll((input_scroll, 0));
-    frame.render_widget(input, area);
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(SEPARATOR)),
+        area,
+    );
+    frame.render_widget(
+        Paragraph::new("›").style(Style::default().fg(if app.connected { ACCENT } else { MUTED })),
+        Rect::new(area.x, inner.y, 1, 1),
+    );
+    frame.render_widget(
+        Paragraph::new(display_text).scroll((input_scroll, 0)),
+        inner,
+    );
 
-    if app.connected && !app.is_busy() {
+    if app.connected && app.ready && !app.sending {
         frame.set_cursor_position((
-            area.x + 1 + cursor_column.min(inner_width.saturating_sub(1)),
-            area.y + 1 + cursor_row.saturating_sub(input_scroll),
+            inner.x + cursor_column.min(inner_width.saturating_sub(1)),
+            inner.y + cursor_row.saturating_sub(input_scroll),
         ));
     }
 }
 
 fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
-    let hint = if app.is_busy() {
-        "processing · ↑↓/PgUp/PgDn 滚动 · Esc/Ctrl+C 退出"
+    let hint = if area.width < 32 {
+        "↵ 发送  Esc 退出"
     } else {
-        "Enter 发送 · ↑↓/PgUp/PgDn 滚动 · Esc/Ctrl+C 退出"
+        "Enter 发送   ↑↓ 滚动   Esc 退出"
     };
-    frame.render_widget(
-        Paragraph::new(hint).style(Style::default().fg(Color::DarkGray)),
-        area,
-    );
+    frame.render_widget(Paragraph::new(hint).style(Style::default().fg(MUTED)), area);
+    if !app.follow_tail && area.width >= 48 {
+        frame.render_widget(
+            Paragraph::new("查看历史")
+                .alignment(Alignment::Right)
+                .style(Style::default().fg(MUTED)),
+            Rect::new(area.right().saturating_sub(8), area.y, 8, area.height),
+        );
+    }
 }
 
 fn history_text(events: &[ChatEvent]) -> Text<'static> {
-    if events.is_empty() {
-        return Text::from(vec![Line::styled(
-            "",
-            Style::default().fg(Color::DarkGray),
-        )]);
-    }
-
     let mut lines = Vec::new();
+    let mut previous_was_tool = false;
     for event in events {
+        if matches!(
+            event,
+            ChatEvent::ToolResult | ChatEvent::Done | ChatEvent::Unknown
+        ) {
+            continue;
+        }
+        let is_tool = matches!(event, ChatEvent::ToolCall { .. });
+        if !lines.is_empty() && !(is_tool && previous_was_tool) {
+            lines.push(Line::default());
+        }
         match event {
-            ChatEvent::User { text } => append_section(
-                &mut lines,
-                "你",
-                text,
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            ChatEvent::User { text } => {
+                append_section(&mut lines, "你", text, Style::default().fg(MUTED))
+            }
             ChatEvent::Answer { text } => append_section(
                 &mut lines,
-                "助手",
+                "小集",
                 text,
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
             ),
             ChatEvent::ToolCall { name } => lines.push(Line::styled(
                 format!("{name}"),
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(MUTED),
             )),
             ChatEvent::ToolResult => continue,
             ChatEvent::Error { text } => append_section(
                 &mut lines,
                 "错误",
                 text,
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                Style::default().fg(ERROR).add_modifier(Modifier::BOLD),
             ),
             ChatEvent::Done | ChatEvent::Unknown => continue,
         }
-        lines.push(Line::default());
+        previous_was_tool = is_tool;
     }
     Text::from(lines)
 }
@@ -574,35 +674,50 @@ fn append_section(lines: &mut Vec<Line<'static>>, label: &str, content: &str, st
 
 fn input_height(input: &str, terminal_area: Rect) -> u16 {
     let width = terminal_area.width.saturating_sub(2).max(1);
-    let desired = visual_line_count(input, width).max(1).saturating_add(2);
-    let max_height = terminal_area.height.saturating_sub(7).max(INPUT_MIN_HEIGHT);
+    let desired = (wrap_input(input, width).len().min(u16::MAX as usize) as u16).saturating_add(3);
+    let max_height = terminal_area
+        .height
+        .saturating_sub(4)
+        .clamp(INPUT_MIN_HEIGHT, INPUT_MAX_HEIGHT);
     desired.clamp(INPUT_MIN_HEIGHT, max_height)
 }
 
-fn cursor_position(text: &str, width: u16) -> (u16, u16) {
+// Use the same cell wrapping for the input and its cursor, including wide Chinese characters.
+fn wrap_input(text: &str, width: u16) -> Vec<String> {
     let width = width.max(1) as usize;
-    let mut row = 0usize;
+    let mut lines = Vec::new();
+    let mut line = String::new();
     let mut column = 0usize;
     for character in text.chars() {
         if character == '\n' {
-            row += 1;
+            lines.push(std::mem::take(&mut line));
             column = 0;
             continue;
         }
         let character_width = UnicodeWidthChar::width(character).unwrap_or_default();
         if column > 0 && column + character_width > width {
-            row += 1;
+            lines.push(std::mem::take(&mut line));
             column = 0;
         }
+        line.push(character);
         column += character_width;
-        if column >= width {
-            row += column / width;
-            column %= width;
-        }
     }
+    lines.push(line);
+    if column >= width {
+        lines.push(String::new());
+    }
+    lines
+}
+
+fn cursor_position(text: &str, width: u16) -> (u16, u16) {
+    let lines = wrap_input(text, width);
     (
-        row.min(u16::MAX as usize) as u16,
-        column.min(u16::MAX as usize) as u16,
+        lines.len().saturating_sub(1).min(u16::MAX as usize) as u16,
+        lines
+            .last()
+            .map(|line| UnicodeWidthStr::width(line.as_str()))
+            .unwrap_or_default()
+            .min(u16::MAX as usize) as u16,
     )
 }
 
