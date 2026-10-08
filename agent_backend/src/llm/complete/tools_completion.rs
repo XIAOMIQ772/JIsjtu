@@ -19,6 +19,7 @@ const PDF_PAGE_HEAD_CHARS: usize = 60;
 
 pub async fn call(name: &str, arguments: serde_json::Value) -> Result<String, String> {
     match name {
+        "sso_login" => crate::sso::login(arguments).await,
         "bash" => run_bash(arguments).await,
         "read" => run_read(arguments).await,
         "write" => run_write(arguments).await,
@@ -358,22 +359,31 @@ async fn get_exam(arguments: serde_json::Value)->Result<String,String>{
 }
 
 
-async fn watch_shuiyuan(_: serde_json::Value)->Result<String,String>{
-    let base_url="https://shuiyuan.sjtu.edu.cn";
-    let _= webbrowser::open(base_url);
-    Ok("open browser sucessful".to_string())
+fn page_is_for_user(arguments: &serde_json::Value, default_show: bool) -> Result<bool, String> {
+    if !arguments.is_object() {
+        return Err("网页工具参数必须是对象".into());
+    }
+    match arguments.get("mode") {
+        None | Some(serde_json::Value::Null) => Ok(default_show),
+        Some(serde_json::Value::String(mode)) if mode == "read" => Ok(false),
+        Some(serde_json::Value::String(mode)) if mode == "show" => Ok(true),
+        _ => Err("mode 必须为 read 或 show；查询任务使用 read".into()),
+    }
 }
-async fn watch_eduinfo(_: serde_json::Value)->Result<String,String>{
+
+async fn watch_shuiyuan(arguments: serde_json::Value)->Result<String,String>{
+    let base_url="https://shuiyuan.sjtu.edu.cn";
+    crate::sso::visit_site(base_url, page_is_for_user(&arguments, true)?).await
+}
+async fn watch_eduinfo(arguments: serde_json::Value)->Result<String,String>{
     let base_url="https://i.sjtu.edu.cn/xtgl/login_slogin.html";
-    let _= webbrowser::open(base_url);
-    Ok("open browser sucessful".to_string())
+    crate::sso::visit_site(base_url, page_is_for_user(&arguments, false)?).await
 }
 async fn open_usual_website(arguments: serde_json::Value)->Result<String,String>{
-    let base_url = arguments["url"].as_str().unwrap();
-    match base_url{
-        "none"=>Err("不可知用户指定的网站具体url，请求提供".to_string()),
-        _=>{let _= webbrowser::open(base_url);Ok("open website sucessful".to_string())}
-    }   
+    let show = page_is_for_user(&arguments, false)?;
+    let base_url = arguments["url"].as_str().filter(|url| *url != "none")
+        .ok_or_else(|| "请提供有效的网页 URL".to_string())?;
+    crate::sso::visit_site(base_url, show).await
 }
 async fn get_time_stamp(_: serde_json::Value)->Result<String,String>{
     let now: String = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
@@ -856,8 +866,11 @@ impl MailConfig {
     fn from_env() -> Result<Self, String> {
         let user = std::env::var("EMAIL_USER_ACCOUNT")
             .map_err(|_| "缺少 EMAIL_USER_ACCOUNT".to_string())?;
-        let pass = std::env::var("EMAIL_USER_PASSWORD")
-            .map_err(|_| "缺少 EMAIL_USER_PASSWORD".to_string())?;
+        let pass = std::env::var("IMAP_PASSWORD")
+            .ok()
+            .filter(|value| !value.is_empty())
+            .or_else(|| std::env::var("EMAIL_USER_PASSWORD").ok())
+            .ok_or_else(|| "缺少 IMAP_PASSWORD 或 EMAIL_USER_PASSWORD".to_string())?;
         let host =
             std::env::var("IMAP_HOST").map_err(|_| "缺少 IMAP_HOST（请在 .env 里配置）".to_string())?;
         let port = std::env::var("IMAP_PORT")

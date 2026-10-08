@@ -17,10 +17,10 @@ const connectionNoticeTextEl = document.getElementById("connection-notice-text")
 
 const toolNames = {
   get_courses: "查看课程", get_exam: "查询作业", course_files: "查找课程资料",
-  pdf_analysis: "阅读 PDF", mail_fetch: "读取校园邮件", watch_shuiyuan: "打开水源社区",
-  watch_eduinfo: "打开教学信息网", bash: "执行任务", read: "读取文件",
+  pdf_analysis: "阅读 PDF", mail_fetch: "读取校园邮件", watch_shuiyuan: "访问水源社区",
+  watch_eduinfo: "访问教学信息网", bash: "执行任务", read: "读取文件",
   write: "写入文件", edit: "编辑文件", get_num: "查询信息",
-  get_time_stamp: "获取当前时间", open_usual_website: "打开网页",
+  get_time_stamp: "获取当前时间", open_usual_website: "访问网页",
 };
 let socket = null;
 let online = false;

@@ -44,7 +44,8 @@ JIsjtu
 | `OPENAI_API_KEY` | 模型服务密钥 |
 | `MODEL` | 模型名称 |
 | `CANVAS_API_TOKEN` | 在 Canvas 的「账户 → 设置」创建访问令牌，用于课程、作业、课件查询 |
-| `EMAIL_USER_ACCOUNT` / `EMAIL_USER_PASSWORD` | 邮箱账号及 IMAP 所需密码或客户端授权码 |
+| `EMAIL_USER_ACCOUNT` / `EMAIL_USER_PASSWORD` | jAccount 账号或交大邮箱地址，以及 jAccount 登录密码 |
+| `IMAP_PASSWORD` | 可选，独立的邮箱密码或客户端授权码；留空时沿用 `EMAIL_USER_PASSWORD` |
 | `IMAP_HOST` / `IMAP_PORT` | 邮箱服务器；学校邮箱可设置 `imap.sjtu.edu.cn`、`993` |
 | `AGENT_HTTP_PORT` / `AGENT_TCP_PORT` | HTTP 与 TCP 端口，默认 `8080` / `8081` |
 | `AGENT_NO_BROWSER` | 设置此变量可跳过自动打开浏览器 |
@@ -52,6 +53,36 @@ JIsjtu
 | `AGENT_SKILLS_DIR` | 可选，指定技能目录；默认找当前目录或上一级的 `skills/` |
 
 模型配置用于对话；Canvas 和邮箱配置按需填写。
+
+## jAccount 自动登录
+
+Agent 启动时自动运行 `sso_login`：从 `.env` 读取 `EMAIL_USER_ACCOUNT` 和 `EMAIL_USER_PASSWORD`，默认在后台无窗口的专用浏览器中打开 jAccount，用本地 `ddddocr` 识别图片验证码并填写。登录过程不弹出窗口、不抢占主窗口焦点。收到认证接口确认后保存登录状态、关闭登录页；已有有效会话时直接复用。交大邮箱地址会自动取 `@` 前的账号部分。
+
+需要本机安装 Edge、Chrome 或 Chromium，以及 Python 3.10+；默认优先使用 Edge，未安装时再查找 Chrome / Chromium。在仓库根目录安装 Python 依赖：
+
+```sh
+python3 -m pip install -r agent_backend/requirements-sso.txt
+```
+
+安装包使用者可以运行 `python3 -m pip install ddddocr 'websockets>=15,<18'`。如果使用虚拟环境，在 `.env` 中用 `AGENT_SSO_PYTHON` 指定该环境的 Python。`AGENT_SSO_BROWSER` 可指定浏览器可执行文件，优先于自动查找。
+
+登录状态默认保存在当前工作目录的 `.sso/`，可用 `AGENT_SSO_DIR` 指定其他私有目录；不同账号使用各自的配置，同一账号切换浏览器或窗口模式时使用独立的浏览器配置并同步已保存的 Cookie。Cookie 不会返回给模型或写入聊天记录。校园查询复用已保存的登录状态，非校园网站使用独立的匿名浏览器配置。常用浏览器的其他配置不会自动获得该会话。Canvas 的现有 API 工具仍使用 `CANVAS_API_TOKEN`。
+
+网页工具通过 `mode` 区分展示与查询：`show` 打开可见网页并保留给用户；`read` 在后台返回正文和链接，完成后自动关闭临时页面及其弹窗，失败、取消或助手进程断开时也会清理。后台登录和查询使用临时浏览器配置，任务结束后退出专用浏览器并删除临时配置，已保存的登录状态仍可复用；独立管理进程负责在助手意外退出时回收浏览器，无响应时只终止自己创建的后台进程。水源工具 `watch_shuiyuan` 默认 `show`，只有让助手查询、阅读或总结内容时才使用 `read`；`watch_eduinfo` 和 `open_usual_website` 默认 `read`。省略 `mode` 或传 `null` 使用对应工具的默认值，显式传值会覆盖默认值。查询课程、检索资料等中间操作应明确使用 `read`，在聊天中给出结果。自动清理仅作用于本次操作创建的后台浏览器与临时上下文，用户已有页面及明确展示的窗口不受影响。需要调试登录或查询时，可设置 `AGENT_SSO_HEADLESS=0` 并重启 Agent。
+
+模型自行编写的脚本也应使用后台浏览器，并用 `try/finally` 关闭自己创建的临时页面、窗口和子进程；为分析文件时优先下载后读取，避免唤起桌面应用。
+
+验证码错误最多尝试三次，账号密码错误立即停止。后台登录失败时关闭隐藏登录页、提示原因，Agent 继续启动；需要手动验证时，在 `.env` 设置 `AGENT_SSO_HEADLESS=0` 后重新启动登录，可见模式会保留失败的登录页供用户处理。手动完成验证后再次运行 `sso_login` 即可保存登录状态，再改回 `AGENT_SSO_HEADLESS=1` 恢复后台登录。`EMAIL_USER_PASSWORD` 必须是 jAccount 登录密码；邮箱客户端授权码请单独填入 `IMAP_PASSWORD`。设 `AGENT_SSO_AUTO_LOGIN=0` 可跳过启动检查，之后仍能调用无参数工具 `sso_login`。也可在 `agent_backend` 目录单独运行：
+
+```sh
+cargo run --locked -- --sso-login
+```
+
+SSO 测试使用本地模拟认证服务、临时浏览器配置及模拟账号，不访问真实 jAccount：
+
+```sh
+python3 -m unittest discover -s agent_backend/scripts -p test_sso.py -v
+```
 
 ## 会话切换
 

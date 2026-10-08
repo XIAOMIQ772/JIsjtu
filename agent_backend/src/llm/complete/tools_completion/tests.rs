@@ -19,6 +19,28 @@ fn arguments() -> Value {
     })
 }
 
+#[tokio::test]
+async fn website_tools_honor_defaults_and_reject_invalid_modes_before_opening_a_browser() {
+    for default_show in [false, true] {
+        for arguments in [json!({}), json!({"mode": null})] {
+            assert_eq!(page_is_for_user(&arguments, default_show).unwrap(), default_show);
+        }
+        assert!(!page_is_for_user(&json!({"mode": "read"}), default_show).unwrap());
+        assert!(page_is_for_user(&json!({"mode": "show"}), default_show).unwrap());
+    }
+    for name in ["watch_eduinfo", "watch_shuiyuan", "open_usual_website"] {
+        let error = call(name, json!({"mode": "foreground", "url": "https://i.sjtu.edu.cn"})).await.unwrap_err();
+        assert!(error.contains("mode"));
+    }
+    assert!(call("open_usual_website", json!({"url": "file:///tmp/test"})).await.unwrap_err().contains("HTTP(S)"));
+
+    let tools = serde_json::to_value(get_tools()).unwrap();
+    for name in ["watch_eduinfo", "watch_shuiyuan", "open_usual_website"] {
+        let tool = tools.as_array().unwrap().iter().find(|tool| tool["function"]["name"] == name).unwrap();
+        assert_eq!(tool["function"]["parameters"]["properties"]["mode"]["enum"], json!(["read", "show", null]));
+    }
+}
+
 #[test]
 fn subagent_schema_and_nullable_context_match_runtime() {
     let tools = serde_json::to_value(get_tools()).unwrap();

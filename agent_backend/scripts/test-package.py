@@ -60,7 +60,7 @@ with tempfile.TemporaryDirectory(prefix="jisjtu-package-") as temporary:
         ports = [listener.getsockname()[1] for listener in sockets]
         for listener in sockets:
             listener.close()
-        env = dict(os.environ, AGENT_NO_BROWSER="1", AGENT_HTTP_PORT=str(ports[0]), AGENT_TCP_PORT=str(ports[1]))
+        env = dict(os.environ, AGENT_NO_BROWSER="1", AGENT_SSO_AUTO_LOGIN="0", AGENT_HTTP_PORT=str(ports[0]), AGENT_TCP_PORT=str(ports[1]))
         with (root / "server.log").open("w+") as log:
             process = subprocess.Popen([str(launcher)], cwd="/private/tmp" if Path("/private/tmp").is_dir() else "/tmp", env=env, stdout=log, stderr=log)
             try:

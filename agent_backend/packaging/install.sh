@@ -67,11 +67,18 @@ MODEL=
 # Canvas 课程、作业、课件查询需要此令牌。
 CANVAS_API_TOKEN=
 
-# 校园邮箱功能需要以下配置。
+# jAccount 登录：账号或交大邮箱地址，以及 jAccount 登录密码。
 EMAIL_USER_ACCOUNT=
 EMAIL_USER_PASSWORD=
+# 邮箱如需客户端授权码，在 IMAP_PASSWORD 单独配置。
+IMAP_PASSWORD=
 IMAP_HOST=
 IMAP_PORT=993
+
+# SSO 默认优先使用 Edge，其次 Chrome/Chromium；需要 Python 的 ddddocr、websockets>=15,<18。
+AGENT_SSO_AUTO_LOGIN=1
+# SSO 登录和网页查询默认在后台无窗口完成；设为 0 供手动验证或排查问题。
+AGENT_SSO_HEADLESS=1
 
 AGENT_HTTP_PORT=8080
 AGENT_TCP_PORT=8081
@@ -92,12 +99,13 @@ app_dir=$(CDPATH= cd -- "$(dirname -- "$0")/../share/JIsjtu" && pwd)
 if [ "$#" -gt 0 ]; then
     case "$1" in
         --config) printf '%s/.env\n' "$app_dir"; exit 0 ;;
-        --help) printf 'JIsjtu          启动服务并打开网页\nJIsjtu --config 显示配置文件位置\n按 Ctrl+C 停止服务。\n'; exit 0 ;;
+        --help) printf 'JIsjtu             启动服务并打开网页\nJIsjtu --tui       启动终端界面\nJIsjtu --sso-login 单独检查或登录 jAccount\nJIsjtu --config    显示配置文件位置\n按 Ctrl+C 停止服务。\n'; exit 0 ;;
+        --sso-login|--tui) ;;
         *) printf '未知参数：%s；使用 JIsjtu --help 查看帮助。\n' "$1" >&2; exit 1 ;;
     esac
 fi
 cd -- "$app_dir"
-exec ./agent
+exec ./agent "$@"
 LAUNCHER
 chmod 755 "$launcher_stage"
 mv -f "$launcher_stage" "$launcher"

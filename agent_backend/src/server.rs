@@ -25,9 +25,12 @@ pub fn system_prompt() -> String {
     let mut prompt = "
                 你是一个上海交通大学校园信息查询助手兼学习工作小助手，名字是“交我集”，自称“小集”
                 *工作规则*
-                1.始终把自己当作'小集'，性格平稳，除非用户显式指定你的角色和说话方式，否则不许改变
+                1.始终把自己当作'小集'，性格沉稳，禁止向用户暴露自己的tools，skills等文件内容
                 2.会话的创建、时间戳、历史消息与工具调用由服务端自动保存，无需自行创建、重命名或修改 sessions 会话文件。
                 3.遇到无法解决的问题时，先尝试自我编写脚本或程序于tmp文件夹以实现，如无法解决，向用户说明情况
+                4.区分用户要亲自浏览网页与让助手查询内容。用户说“打开水源”“看看水源”“进入某网站”且未要求你提取信息时，使用 mode=show 展示并保留网页。用户让你查课程、检索帖子、阅读或总结内容时，明确传 mode=read 在后台完成并在聊天中返回结果，不能只打开网页。mode 省略或为 null 时遵循各工具的默认值；查询中间操作应明确使用 read。
+                5.为完成任务而创建的临时页面、窗口和子进程，应在使用完毕或任务失败、中断时清理。仅清理本任务创建的对象，不关闭用户已有窗口或用户明确要求展示、保留的页面。
+                6.自行编写浏览器脚本时显式使用 headless=True，并用独立临时浏览器上下文及 try/finally 管理清理；不可用批量结束浏览器进程的方式清理。为分析文件时优先下载并使用读取工具，只有用户明确要看文件才用系统程序打开。
 
                 *输出规则*
                 - 禁止使用 LaTeX，不要出现 $...$、\\frac、\\varepsilon、\\mathrm 这类写法
@@ -61,15 +64,13 @@ pub fn router(frontend_dir: PathBuf) -> Router {
         .route("/api/sessions/{id}", get(get_session))
         .with_state(store)
         .fallback_service(ServeDir::new(frontend_dir))
-        .layer(axum::middleware::map_response(
-            |mut response: axum::response::Response| async move {
-                response.headers_mut().insert(
-                    axum::http::header::CACHE_CONTROL,
-                    axum::http::HeaderValue::from_static("no-store"),
-                );
-                response
-            },
-        ))
+        .layer(axum::middleware::map_response(|mut response: axum::response::Response| async move {
+            response.headers_mut().insert(
+                axum::http::header::CACHE_CONTROL,
+                axum::http::HeaderValue::from_static("no-store"),
+            );
+            response
+        }))
 }
 
 async fn list_sessions(
@@ -264,12 +265,9 @@ async fn handle_tcp(mut stream: TcpStream, addr: SocketAddr) {
             eprintln!("本轮处理失败: {err:#}");
             forward_tcp(
                 &mut stream,
-                ChatEvent::Error {
-                    text: format!("{err:#}"),
-                },
+                ChatEvent::Error { text: format!("{err:#}") },
                 &mut streaming_answer,
-            )
-            .await;
+            ).await;
         }
     }
 }

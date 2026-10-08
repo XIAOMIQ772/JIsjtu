@@ -87,7 +87,7 @@ async function until(check, message) {
   const tcp = await freePort();
   const base = `http://127.0.0.1:${port}`;
   const env = { ...process.env, OPENAI_API_KEY: 'fake-test-key', OPENAI_BASE_URL: `http://127.0.0.1:${model.address().port}/v1`,
-    MODEL: 'fake', AGENT_HTTP_PORT: String(port), AGENT_TCP_PORT: String(tcp), AGENT_NO_BROWSER: '1',
+    MODEL: 'fake', AGENT_HTTP_PORT: String(port), AGENT_TCP_PORT: String(tcp), AGENT_NO_BROWSER: '1', AGENT_SSO_AUTO_LOGIN: '0',
     AGENT_FRONTEND_DIR: path.join(repo, 'agent_frontend'), AGENT_SKILLS_DIR: path.join(root, 'skills'),
     AGENT_SESSIONS_DIR: path.join(root, 'sessions'), HTTP_PROXY: '', HTTPS_PROXY: '', ALL_PROXY: '',
     http_proxy: '', https_proxy: '', all_proxy: '', NO_PROXY: '*', no_proxy: '*' };

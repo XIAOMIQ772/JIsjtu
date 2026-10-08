@@ -3,6 +3,19 @@ use serde_json::json;
 pub fn get_tools() -> Vec<ChatCompletionTools> {
     vec![
     ChatCompletionTools::Function(ChatCompletionTool {
+        function: FunctionObject {
+            name: "sso_login".to_string(),
+            description: Some(
+                "检查并登录交大 jAccount 单点登录。程序从 .env 的 EMAIL_USER_ACCOUNT、EMAIL_USER_PASSWORD 读取凭据，\
+                 默认在后台无窗口运行，本地 OCR 识别图片验证码，成功后保存浏览器会话并关闭登录页。启动时自动运行；登录过期或失败后可重试。\
+                 账号密码错误时先让用户检查配置，不要重复尝试。不要在工具参数或对话里传入账号、密码、Cookie；\
+                 后续校园网页工具默认在后台复用该会话。".to_string(),
+            ),
+            parameters: Some(json!({"type":"object", "properties":{}, "required":[], "additionalProperties":false})),
+            strict: Some(true),
+        },
+    }),
+    ChatCompletionTools::Function(ChatCompletionTool {
         function: (FunctionObject {
             name: "bash".to_string(),
             description: Some(
@@ -141,13 +154,14 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
         function: (FunctionObject {
             name: "watch_shuiyuan".to_string(),
             description: Some(
-                "打开名为水源社区的网页".to_string(),
+                "打开水源社区，复用 jAccount 登录状态。默认 show：打开可见网页并保留给用户。只有用户让助手查询、阅读、提取或总结网页内容时，才明确传 read，在后台读取后自动关闭临时页面。".to_string(),
             ),
             parameters: Some(json!({
                 "type":"object",
                 "properties":{
+                    "mode":{"type":["string","null"],"enum":["read","show",null],"description":"show 或 null（默认）：打开可见网页并保留给用户；read：仅在用户让助手查询或阅读内容时使用，后台读取后关闭临时页面"}
                 },
-                "required":[],
+                "required":["mode"],
                 "additionalProperties":false
             })),
             strict: Some(true),
@@ -216,7 +230,7 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
                     "action":{
                         "type":"string",
                         "enum":["list","download","open"],
-                        "description":"list=列出文件;download=下载到本地;open=下载并用系统默认程序打开"
+                        "description":"list=列出文件；download=下载供后台分析；open=下载并展示给用户，仅在用户明确要查看文件时使用。为查询或分析资料应下载后调用读取工具。"
                     },
                     "file":{
                         "type":"string",
@@ -237,17 +251,36 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
         function: (FunctionObject {
             name: "watch_eduinfo".to_string(),
             description: Some(
-                "打开教学信息服务网".to_string(),
+                "读取教学信息服务网的页面内容和链接，供后续课程查询使用。查课程时用 read，默认后台读取后自动关闭临时页面；仅用户明确要看网页时使用 show。".to_string(),
             ),
             parameters: Some(json!({
                 "type":"object",
                 "properties":{
+                    "mode":{"type":["string","null"],"enum":["read","show",null],"description":"read 或 null：后台读取并关闭临时页面；show：展示并保留给用户"}
                 },
-                "required":[],
+                "required":["mode"],
                 "additionalProperties":false
             })),
             strict: Some(true),
         }),
+    }),
+    ChatCompletionTools::Function(ChatCompletionTool {
+        function: FunctionObject {
+            name: "open_usual_website".to_string(),
+            description: Some(
+                "访问指定 HTTP(S) 网页。查询任务用 read，后台返回可见正文和链接，完成后自动关闭临时页面，可继续读取返回的链接；校园网页复用 jAccount 登录。show 仅用于用户明确要求打开网页查看，此时展示并保留页面。".to_string(),
+            ),
+            parameters: Some(json!({
+                "type":"object",
+                "properties":{
+                    "url":{"type":"string","description":"需要访问的完整 HTTP(S) 网页地址"},
+                    "mode":{"type":["string","null"],"enum":["read","show",null],"description":"查询用 read 或 null；仅用户明确要看网页时用 show"}
+                },
+                "required":["url","mode"],
+                "additionalProperties":false
+            })),
+            strict: Some(true),
+        },
     }),
     ChatCompletionTools::Function(ChatCompletionTool {
         function: (FunctionObject {

@@ -2,6 +2,7 @@ mod llm;
 mod server;
 mod sessions;
 mod skills;
+mod sso;
 mod tui;
 
 use std::path::PathBuf;
@@ -31,9 +32,22 @@ async fn main() {
         eprintln!("提示：未加载 .env（{error}），将继续使用进程环境变量");
     }
 
+    if std::env::args().any(|argument| argument == "--sso-login") {
+        match sso::login(serde_json::json!({})).await {
+            Ok(message) => println!("{message}"),
+            Err(message) => {
+                eprintln!("{message}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
     let tui_mode = std::env::args().any(|argument| argument == "--tui");
     let http_port = env_port("AGENT_HTTP_PORT", 13376);
     let tcp_port = env_port("AGENT_TCP_PORT", 8081);
+
+    sso::startup().await;
 
     let frontend = frontend_dir();
     if !frontend.is_dir() {
