@@ -24,12 +24,34 @@ case "$prefix" in *'
 # Filled by the packaging script for the actual build target.
 package_os='@PACKAGE_OS@'
 package_arch='@PACKAGE_ARCH@'
+package_target='@PACKAGE_TARGET@'
 [ "$(uname -s)" = "$package_os" ] || fail "此安装包适用于 $package_os，请下载当前系统对应的版本"
 [ "$(uname -m)" = "$package_arch" ] || fail "此安装包适用于 $package_arch，请下载当前处理器对应的版本"
-for asset in agent agent_frontend/index.html agent_frontend/style.css agent_frontend/app.js; do
+
+# The same rendered installer works in the ZIP and at the repository root.
+agent_asset="$package_dir/agent"
+config_asset="$package_dir/.env.example"
+requirements_asset="$package_dir/requirements-sso.txt"
+readme_asset="$package_dir/README.md"
+if [ ! -f "$agent_asset" ] && [ -f "$package_dir/agent_backend/Cargo.toml" ]; then
+    backend_dir="$package_dir/agent_backend"
+    for candidate in "$backend_dir/target/$package_target/release/agent" "$backend_dir/target/release/agent"; do
+        if [ -f "$candidate" ] && { [ ! -f "$agent_asset" ] || [ "$candidate" -nt "$agent_asset" ]; }; then
+            agent_asset=$candidate
+        fi
+    done
+    config_asset="$backend_dir/.env.example"
+    requirements_asset="$backend_dir/requirements-sso.txt"
+    readme_asset="$backend_dir/packaging/README.md"
+fi
+[ -f "$agent_asset" ] || fail '缺少 release 程序，请先构建 release 或使用完整安装包'
+for asset in agent_frontend/index.html agent_frontend/style.css agent_frontend/app.js LICENSE; do
     [ -f "$package_dir/$asset" ] || fail "安装包缺少 $asset"
 done
 [ -d "$package_dir/skills" ] || fail '安装包缺少 skills 目录'
+[ -f "$config_asset" ] || fail '安装包缺少 .env.example'
+[ -f "$requirements_asset" ] || fail '安装包缺少 requirements-sso.txt'
+[ -f "$readme_asset" ] || fail '安装包缺少 README.md'
 
 mkdir -p "$prefix"
 prefix=$(CDPATH= cd -- "$prefix" && pwd)
@@ -47,7 +69,7 @@ printf 'JIsjtu\n' > "$app_dir/.jisjtu-install"
 
 # Stage the executable before replacing it, so updates also work on Linux.
 binary_stage=$(mktemp "$app_dir/.agent.XXXXXX")
-cp "$package_dir/agent" "$binary_stage"
+cp "$agent_asset" "$binary_stage"
 chmod 755 "$binary_stage"
 mv -f "$binary_stage" "$app_dir/agent"
 for asset in index.html style.css app.js; do
@@ -55,34 +77,13 @@ for asset in index.html style.css app.js; do
 done
 # 合并而非替换：升级时保留用户自己添加的技能
 cp -R "$package_dir/skills/." "$app_dir/skills/"
+cp "$config_asset" "$app_dir/.env.example"
+cp "$requirements_asset" "$app_dir/requirements-sso.txt"
+cp "$readme_asset" "$app_dir/README.md"
+cp "$package_dir/LICENSE" "$app_dir/LICENSE"
 
 if [ ! -e "$app_dir/.env" ]; then
-    cat > "$app_dir/.env" <<'CONFIG'
-# 必填：模型服务的 API 密钥、兼容 OpenAI 的接口地址和模型名称。
-# MODEL 填写该接口支持的模型名称，例如 deepseek-flash。
-OPENAI_API_KEY=
-OPENAI_BASE_URL=
-MODEL=
-
-# Canvas 课程、作业、课件查询需要此令牌。
-CANVAS_API_TOKEN=
-
-# jAccount 登录：账号或交大邮箱地址，以及 jAccount 登录密码。
-EMAIL_USER_ACCOUNT=
-EMAIL_USER_PASSWORD=
-# 邮箱如需客户端授权码，在 IMAP_PASSWORD 单独配置。
-IMAP_PASSWORD=
-IMAP_HOST=
-IMAP_PORT=993
-
-# SSO 默认优先使用 Edge，其次 Chrome/Chromium；需要 Python 的 ddddocr、websockets>=15,<18。
-AGENT_SSO_AUTO_LOGIN=1
-# SSO 登录和网页查询默认在后台无窗口完成；设为 0 供手动验证或排查问题。
-AGENT_SSO_HEADLESS=1
-
-AGENT_HTTP_PORT=8080
-AGENT_TCP_PORT=8081
-CONFIG
+    cp "$config_asset" "$app_dir/.env"
     chmod 600 "$app_dir/.env"
     printf '已生成配置模板：%s/.env\n' "$app_dir"
 else
@@ -96,10 +97,14 @@ cat > "$launcher_stage" <<'LAUNCHER'
 # Managed by JIsjtu installer
 set -eu
 app_dir=$(CDPATH= cd -- "$(dirname -- "$0")/../share/JIsjtu" && pwd)
+if [ "$#" -eq 0 ]; then
+    set -- --tui
+fi
 if [ "$#" -gt 0 ]; then
     case "$1" in
         --config) printf '%s/.env\n' "$app_dir"; exit 0 ;;
-        --help) printf 'JIsjtu             启动服务并打开网页\nJIsjtu --tui       启动终端界面\nJIsjtu --sso-login 单独检查或登录 jAccount\nJIsjtu --config    显示配置文件位置\n按 Ctrl+C 停止服务。\n'; exit 0 ;;
+        --help) printf 'JIsjtu             默认启动终端界面（TUI）\nJIsjtu --web       启动网页界面，也可使用 JIsjtu web\nJIsjtu --tui       显式启动终端界面\nJIsjtu --sso-login 单独检查或登录 jAccount\nJIsjtu --config    显示配置文件位置\n按 Ctrl+C 停止服务。\n'; exit 0 ;;
+        --web|web) shift ;;
         --sso-login|--tui) ;;
         *) printf '未知参数：%s；使用 JIsjtu --help 查看帮助。\n' "$1" >&2; exit 1 ;;
     esac
@@ -139,6 +144,9 @@ fi
 printf '\n安装完成。请先填写：%s/.env\n' "$app_dir"
 printf '对话必填：OPENAI_API_KEY、OPENAI_BASE_URL、MODEL。\n'
 printf '新开终端后运行：JIsjtu\n当前终端立即使用可先执行：\n%s\n' "$path_line"
+printf '默认进入终端界面；需要网页界面请运行：JIsjtu --web\n'
 printf '查看配置位置：JIsjtu --config\n'
 printf '技能目录：%s/skills，放 <名字>/SKILL.md 即可扩展，改完重启生效。\n' "$app_dir"
+printf '浏览器工具还需 Python 3.10+ 和 Edge / Chrome；SSO 依赖安装见：%s/README.md\n' "$app_dir"
+printf '升级后请重新启动正在运行的 JIsjtu。\n'
 printf '安装文件已复制，解压目录可以删除。\n'

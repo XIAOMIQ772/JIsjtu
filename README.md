@@ -2,13 +2,15 @@
 
 上海交通大学校园信息查询助手兼学习工作小助手。支持通过自然语言查询 Canvas 课程、作业及课件，读取校园邮件、阅读 PDF、打开水源社区与教务网，也可运行命令、处理文件和完成编码任务，支持url/名称唤起任意网站
 
+现已支持多sessions热切换，skills读取，以及交大sso自动化登陆and持久化使用
+
 建议使用deepseek相关模型以提升运行速度
 
-前端使用 HTML / CSS / JavaScript，后端使用 Rust + Axum，通过 WebSocket 传递回答与工具进度。后端启动后会自动打开网页，无需单独启动前端。
+前端使用 HTML / CSS / JavaScript，后端使用 Rust + Axum，通过 WebSocket 传递回答与工具进度。安装后的 `JIsjtu` 命令默认使用终端界面；`JIsjtu --web` 才打开网页，无需单独启动前端。
 
 ## 速度启动
 下载JIsjtu.zip
-解压后查看READNME.md
+解压后查看 README.md。
 
 ## 使用安装包
 
@@ -32,7 +34,7 @@ vim ~/.local/share/JIsjtu/.env
 JIsjtu
 ```
 
-程序默认打开 `http://127.0.0.1:8080`。终端需保持运行，按 `Ctrl+C` 停止。`JIsjtu --config` 可查看配置路径。配置修改后需重启。
+`JIsjtu` 默认启动 TUI，可输入 `/sessions` 切换会话。运行 `JIsjtu --web` 或 `JIsjtu web` 才会打开网页，默认地址为 `http://127.0.0.1:13376`。终端需保持运行，按 `Ctrl+C` 停止。`JIsjtu --config` 可查看配置路径，`JIsjtu --tui` 显式使用终端界面，`JIsjtu --sso-login` 单独检查登录。配置修改或升级后需重启。
 
 ## 配置
 
@@ -47,7 +49,7 @@ JIsjtu
 | `EMAIL_USER_ACCOUNT` / `EMAIL_USER_PASSWORD` | jAccount 账号或交大邮箱地址，以及 jAccount 登录密码 |
 | `IMAP_PASSWORD` | 可选，独立的邮箱密码或客户端授权码；留空时沿用 `EMAIL_USER_PASSWORD` |
 | `IMAP_HOST` / `IMAP_PORT` | 邮箱服务器；学校邮箱可设置 `imap.sjtu.edu.cn`、`993` |
-| `AGENT_HTTP_PORT` / `AGENT_TCP_PORT` | HTTP 与 TCP 端口，默认 `8080` / `8081` |
+| `AGENT_HTTP_PORT` / `AGENT_TCP_PORT` | HTTP 与 TCP 端口，默认 `13376` / `8081` |
 | `AGENT_NO_BROWSER` | 设置此变量可跳过自动打开浏览器 |
 | `AGENT_FRONTEND_DIR` | 可选，指定前端静态文件目录 |
 | `AGENT_SKILLS_DIR` | 可选，指定技能目录；默认找当前目录或上一级的 `skills/` |
@@ -64,7 +66,7 @@ Agent 启动时自动运行 `sso_login`：从 `.env` 读取 `EMAIL_USER_ACCOUNT`
 python3 -m pip install -r agent_backend/requirements-sso.txt
 ```
 
-安装包使用者可以运行 `python3 -m pip install ddddocr 'websockets>=15,<18'`。如果使用虚拟环境，在 `.env` 中用 `AGENT_SSO_PYTHON` 指定该环境的 Python。`AGENT_SSO_BROWSER` 可指定浏览器可执行文件，优先于自动查找。
+安装包内附 `requirements-sso.txt`，安装后也会复制到应用目录。安装包使用者可按随包 README 创建 Python 虚拟环境，再安装此依赖清单。在 `.env` 中用 `AGENT_SSO_PYTHON` 指定该环境的 Python。`AGENT_SSO_BROWSER` 可指定浏览器可执行文件，优先于自动查找。
 
 登录状态默认保存在当前工作目录的 `.sso/`，可用 `AGENT_SSO_DIR` 指定其他私有目录；不同账号使用各自的配置，同一账号切换浏览器或窗口模式时使用独立的浏览器配置并同步已保存的 Cookie。Cookie 不会返回给模型或写入聊天记录。校园查询复用已保存的登录状态，非校园网站使用独立的匿名浏览器配置。常用浏览器的其他配置不会自动获得该会话。Canvas 的现有 API 工具仍使用 `CANVAS_API_TOKEN`。
 
@@ -148,13 +150,22 @@ cargo run --locked
 sh scripts/package.sh
 ```
 
-输出 `agent_backend/dist/JIsjtu-<平台>.zip`，包含安装脚本、后端程序和前端目录。默认按当前系统及架构构建；Intel Mac、Apple Silicon Mac、Linux 需要分别构建。Linux 包仍依赖相应系统动态库，当前安装脚本不支持 Windows。
+输出 `agent_backend/dist/JIsjtu-<平台>.zip`，同时更新仓库根目录的 `JIsjtu.zip` 和 `install.sh`。安装包包含后端程序、前端、技能、安装说明、`.env.example`、SSO 依赖清单和许可证，不包含个人配置、Cookie 或会话。安装脚本统一由 `agent_backend/packaging/install.sh` 生成；根目录脚本也可以直接从仓库安装已有的 release。
+
+已有经过验证的当前平台 release 时，可直接打包该文件：
+
+```sh
+AGENT_PACKAGE_BINARY="$PWD/target/release/agent" sh scripts/package.sh
+```
+
+默认按当前系统及架构构建；Intel Mac、Apple Silicon Mac、Linux 需要分别构建。Python 和浏览器需在目标机器安装，SSO 依赖按包内说明安装。Linux 包仍依赖相应系统动态库，当前安装脚本不支持 Windows。
 
 安装与启动验证：
 
 ```sh
 python3 scripts/test-package.py
 python3 scripts/test-package.py --smoke
+python3 scripts/test-package.py --archive ../JIsjtu.zip --smoke
 ```
 
 `--smoke` 在临时目录安装并检查 HTTP、静态文件与 TCP 服务，不修改真实 shell 配置。安装脚本支持 `--prefix /绝对路径`、`--no-path`、`--profile /配置文件路径`。
