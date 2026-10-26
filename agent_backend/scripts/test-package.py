@@ -1,19 +1,62 @@
 """Exercise the actual distribution in an isolated temporary installation."""
 import argparse
+import fcntl
 import os
 from pathlib import Path
+import pty
+import select
 import socket
+import struct
 import subprocess
 import tempfile
+import termios
 import time
 import urllib.request
 import zipfile
 
 
+def check_default_tui(executable, cwd, environment):
+    """Exercise the actual entry point with no mode arguments in a real PTY."""
+    master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
+    process = None
+    try:
+        process = subprocess.Popen([str(executable)], cwd=cwd,
+                                   env=dict(environment, TERM="xterm-256color"),
+                                   stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
+        os.close(slave)
+        slave = None
+        screen = bytearray()
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if select.select([master], [], [], 0.1)[0]:
+                try:
+                    screen.extend(os.read(master, 65536))
+                except OSError:
+                    break
+            if b"\x1b[?1049h" in screen and b"/sessions" in screen:
+                break
+            assert process.poll() is None, "Default entry point exited before rendering TUI"
+        assert b"\x1b[?1049h" in screen and b"/sessions" in screen, "Default entry point did not render TUI"
+        os.write(master, b"\x03")
+        assert process.wait(timeout=5) == 0, "TUI must exit cleanly on Ctrl+C"
+    finally:
+        if slave is not None:
+            os.close(slave)
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+        os.close(master)
+
+
 repo = Path(__file__).resolve().parent.parent
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--archive", type=Path, help="ZIP to verify; defaults to the newest platform archive")
-parser.add_argument("--smoke", action="store_true", help="also start the installed HTTP/TCP services")
+parser.add_argument("--smoke", action="store_true", help="also check default TUI and explicit Web startup")
 options = parser.parse_args()
 archive = options.archive
 if archive is None:
@@ -56,8 +99,8 @@ with tempfile.TemporaryDirectory(prefix="jisjtu-package-") as temporary:
     try:
         installed_binary.write_text('#!/bin/sh\nprintf "argc=%s\\n" "$#"\nfor arg do printf "arg=%s\\n" "$arg"; done\n')
         installed_binary.chmod(0o755)
-        for arguments, expected in (([], "argc=1\narg=--tui\n"), (["--tui"], "argc=1\narg=--tui\n"),
-                                    (["--web"], "argc=0\n"), (["web"], "argc=0\n"),
+        for arguments, expected in (([], "argc=0\n"), (["--tui"], "argc=1\narg=--tui\n"),
+                                    (["--web"], "argc=1\narg=--web\n"), (["web"], "argc=1\narg=web\n"),
                                     (["--sso-login"], "argc=1\narg=--sso-login\n")):
             assert subprocess.check_output([str(launcher), *arguments], text=True) == expected
     finally:
@@ -117,6 +160,9 @@ with tempfile.TemporaryDirectory(prefix="jisjtu-package-") as temporary:
         for listener in sockets:
             listener.close()
         env = dict(os.environ, AGENT_NO_BROWSER="1", AGENT_SSO_AUTO_LOGIN="0", AGENT_HTTP_PORT=str(ports[0]), AGENT_TCP_PORT=str(ports[1]))
+        for executable in (installed_binary, launcher):
+            check_default_tui(executable, installed_binary.parent, env)
+        print("PASS: both the release binary and installed command default to TUI and exit cleanly.", flush=True)
         with (root / "server.log").open("w+") as log:
             process = subprocess.Popen([str(launcher), "--web"], cwd="/private/tmp" if Path("/private/tmp").is_dir() else "/tmp", env=env, stdout=log, stderr=log)
             try:

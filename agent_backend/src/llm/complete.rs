@@ -14,7 +14,7 @@ mod streaming;
 pub mod tools;
 pub mod tools_completion;
 use streaming::{StreamedMessage, stream_message};
-use tools_completion::call;
+use tools_completion::{USER_NOTICE_MARK, approve_homework_submissions, call};
 
 const EVENT_PREVIEW_CHARS: usize = 500;
 
@@ -97,6 +97,10 @@ async fn chat_with_tools(
             .build()?
             .into(),
     );
+    // 只有主 agent 的 prompt 是用户亲手输入的；子 agent 的任务由模型撰写，不能用来确认提交。
+    if allow_subagents {
+        approve_homework_submissions(prompt);
+    }
 
     // 每一轮就是一次“思考 → 行动 → 观察”，步数受 MAX_REACT_STEPS 限制。
     for _ in 0..MAX_REACT_STEPS {
@@ -156,11 +160,28 @@ async fn chat_with_tools(
 
                         let outcome = if name == "create_subagents" && !allow_subagents {
                             Err(anyhow::anyhow!("子 agent 不能再次调用 create_subagents"))
+                        } else if name == "homework"
+                            && !allow_subagents
+                            && serde_json::from_str::<Value>(arguments)
+                                .is_ok_and(|value| value["action"] == "submit")
+                        {
+                            Err(anyhow::anyhow!("子 agent 不能提交作业，请把答案交回主 agent，由主 agent 请用户确认后提交"))
                         } else {
                             tool_calling(name, arguments).await
                         };
                         let (result, ok) = match outcome {
-                            Ok(result) => (result, true),
+                            // 提交预览由系统直接发给用户，模型只拿到前半段说明，转述不了也篡改不了
+                            Ok(result) => match result.split_once(USER_NOTICE_MARK) {
+                                Some((for_model, for_user)) => {
+                                    if let Some(tx) = tx {
+                                        let _ = tx.send(ChatEvent::Answer {
+                                            text: for_user.to_string(),
+                                        });
+                                    }
+                                    (for_model.to_string(), true)
+                                }
+                                None => (result, true),
+                            },
                             Err(err) => {
                                 eprintln!("工具 {name} 执行失败: {err:#}");
                                 (format!("工具执行失败: {err:#}"), false)

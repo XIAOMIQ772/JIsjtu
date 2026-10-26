@@ -93,7 +93,7 @@ async function until(check, message) {
     http_proxy: '', https_proxy: '', all_proxy: '', NO_PROXY: '*', no_proxy: '*' };
   const binary = process.env.AGENT_TEST_BINARY || path.join(repo, 'agent_backend/target/aarch64-apple-darwin/release/agent');
   async function start() {
-    processHandle = spawn(binary, [], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    processHandle = spawn(binary, ['--web'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
     processHandle.stdout.on('data', data => { log += data; });
     processHandle.stderr.on('data', data => { log += data; });
     await until(async () => {

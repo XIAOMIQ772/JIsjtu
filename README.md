@@ -6,7 +6,7 @@
 
 建议使用deepseek相关模型以提升运行速度
 
-前端使用 HTML / CSS / JavaScript，后端使用 Rust + Axum，通过 WebSocket 传递回答与工具进度。安装后的 `JIsjtu` 命令默认使用终端界面；`JIsjtu --web` 才打开网页，无需单独启动前端。
+前端使用 HTML / CSS / JavaScript，后端使用 Rust + Axum，通过 WebSocket 传递回答与工具进度。`JIsjtu` 和源码运行的 `cargo run` 都默认使用终端界面；显式指定 `--web` 或 `web` 才打开网页，无需单独启动前端。
 
 ## 速度启动
 下载JIsjtu.zip
@@ -90,7 +90,7 @@ python3 -m unittest discover -s agent_backend/scripts -p test_sso.py -v
 
 左侧「我的对话」显示已保存的会话，点击即可切换，不需要刷新页面。「开启new session」会建立独立上下文，原会话仍保留。每个会话的输入草稿、滚动位置和工具进度独立；切走后任务继续执行，列表显示处理状态，切回时同步完整记录。草稿和滚动位置在当前页面内保留，聊天记录与模型上下文保存到磁盘，刷新或服务重启后仍可继续。
 
-TUI 模式（`cargo run --locked -- --tui`）下，输入 `/sessions` 并按 Enter，进入独立的会话选择界面。用 `↑/↓` 选择，Enter 打开会话并返回聊天，Esc 取消返回，`r` 刷新列表。列表按最近更新时间排序，并标出当前会话和正在处理的会话；模型回复中也可以切换，切回后同步最新内容。每个会话的草稿和滚动位置在本次 TUI 运行期间独立保留，`/sessions` 不会发给模型或写入聊天历史。
+TUI 模式（默认 `cargo run --locked`，也可显式指定 `--tui`）下，输入 `/sessions` 并按 Enter，进入独立的会话选择界面。用 `↑/↓` 选择，Enter 打开会话并返回聊天，Esc 取消返回，`r` 刷新列表。列表按最近更新时间排序，并标出当前会话和正在处理的会话；模型回复中也可以切换，切回后同步最新内容。每个会话的草稿和滚动位置在本次 TUI 运行期间独立保留，`/sessions` 不会发给模型或写入聊天历史。
 
 会话由服务端管理，不依赖模型调用文件工具保存。`sessions/<稳定ID>.json` 保存完整模型消息（含工具调用及结果）、页面事件、创建时间和标题；标题取首次提问的前 28 个字符。`sessions/config.json` 是旧的格式示例，不作为聊天记录读取。可通过 `AGENT_SESSIONS_DIR` 指定存储位置，默认使用当前目录或上一级已有的 `sessions/`。
 
@@ -137,7 +137,8 @@ description: 校园卡余额与消费记录查询流程
 cd agent_backend
 cp .env.example .env
 # 编辑 .env，填写个人配置
-cargo run --locked
+cargo run --locked           # 默认 TUI
+cargo run --locked -- --web  # 显式启动网页界面
 ```
 
 保留同级 `agent_frontend` 目录。前端可直接编辑并刷新网页。
@@ -168,7 +169,7 @@ python3 scripts/test-package.py --smoke
 python3 scripts/test-package.py --archive ../JIsjtu.zip --smoke
 ```
 
-`--smoke` 在临时目录安装并检查 HTTP、静态文件与 TCP 服务，不修改真实 shell 配置。安装脚本支持 `--prefix /绝对路径`、`--no-path`、`--profile /配置文件路径`。
+`--smoke` 在临时目录安装，检查真实程序和安装命令默认进入 TUI，并验证显式 Web 模式的 HTTP、静态文件与 TCP 服务，不修改真实 shell 配置。安装脚本支持 `--prefix /绝对路径`、`--no-path`、`--profile /配置文件路径`。
 
 ## 使用边界
 

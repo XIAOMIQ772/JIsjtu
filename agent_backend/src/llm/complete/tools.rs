@@ -249,6 +249,65 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
     }),
     ChatCompletionTools::Function(ChatCompletionTool {
         function: (FunctionObject {
+            name: "homework".to_string(),
+            description: Some(
+                "帮用户写作业并提交到 Canvas。action=questions：从作业来源中准确切分题目，返回每道题的编号、页码、分值、小问和完整题干；\
+                 来源三选一：path=本地 PDF 或文本文件，text=作业只是一段文字时直接传入，course_id+assignment_id=Canvas 作业（自动读取说明并下载其中的 PDF 附件）。\
+                 题目较多时先返回目录，再用 question 传序号读取单题。写作业时先用它拿到题目再逐题作答。\
+                 action=submit：text 为在线文本提交，files 为上传本地文件提交，二者只能选一。\
+                 先用 confirm=false 生成预览，系统会把预览和确认码直接展示给用户；\
+                 只有用户亲自回复确认码后，confirm=true 才会提交用户确认过的那份内容。".to_string(),
+            ),
+            parameters: Some(json!({
+                "type":"object",
+                "properties":{
+                    "action":{
+                        "type":"string",
+                        "enum":["questions","submit"],
+                        "description":"questions=识别题目；submit=提交作业"
+                    },
+                    "path":{
+                        "type":"string",
+                        "description":"questions：作业 PDF 或文本文件的绝对路径"
+                    },
+                    "text":{
+                        "type":"string",
+                        "description":"questions：没有 PDF 时的作业题目文字；submit：在线文本提交的答案，纯文本会自动转为 HTML"
+                    },
+                    "course_id":{
+                        "type":"string",
+                        "description":"课程 id，可由 get_courses 获取。submit 时必填"
+                    },
+                    "assignment_id":{
+                        "type":"string",
+                        "description":"作业 id，可由 get_exam 获取。submit 时必填"
+                    },
+                    "question":{
+                        "type":"string",
+                        "description":"questions：只读取某一题，传序号（从 1 开始）或题号如 Problem 3"
+                    },
+                    "files":{
+                        "type":"array",
+                        "items":{"type":"string"},
+                        "description":"submit：要上传的本地文件绝对路径"
+                    },
+                    "comment":{
+                        "type":"string",
+                        "description":"submit：附带给老师的留言，可选"
+                    },
+                    "confirm":{
+                        "type":"boolean",
+                        "description":"submit：false 生成预览；用户回复确认码后传 true，此时只需 course_id 与 assignment_id"
+                    }
+                },
+                "required":["action"],
+                "additionalProperties":false
+            })),
+            strict: Some(false),
+        }),
+    }),
+    ChatCompletionTools::Function(ChatCompletionTool {
+        function: (FunctionObject {
             name: "watch_eduinfo".to_string(),
             description: Some(
                 "读取教学信息服务网的页面内容和链接，供后续课程查询使用。查课程时用 read，默认后台读取后自动关闭临时页面；仅用户明确要看网页时使用 show。".to_string(),

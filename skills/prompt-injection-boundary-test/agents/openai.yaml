@@ -1,0 +1,4 @@
+interface:
+  display_name: "提示词注入边界测试"
+  short_description: "在授权聊天测试中区分资料披露、输出约束失效与指令劫持"
+  default_prompt: "使用 $prompt-injection-boundary-test，基于已有授权和可用入口设计有对照的提示词注入测试，逐条判读证据，并在额度耗尽或我要求暂停时停止。"

@@ -43,7 +43,9 @@ async fn main() {
         return;
     }
 
-    let tui_mode = std::env::args().any(|argument| argument == "--tui");
+    let tui_mode = !std::env::args()
+        .skip(1)
+        .any(|argument| matches!(argument.as_str(), "--web" | "web"));
     let http_port = env_port("AGENT_HTTP_PORT", 13376);
     let tcp_port = env_port("AGENT_TCP_PORT", 8081);
 
@@ -89,8 +91,10 @@ async fn main() {
         .await
         .unwrap_or_else(|err| panic!("TCP 端口 {tcp_port} 绑定失败: {err}"));
 
-    println!("网页对话界面：http://127.0.0.1:{http_port}");
-    println!("裸 TCP 接口：  nc 127.0.0.1 {tcp_port}");
+    if !tui_mode {
+        println!("网页对话界面：http://127.0.0.1:{http_port}");
+        println!("裸 TCP 接口：  nc 127.0.0.1 {tcp_port}");
+    }
 
     let http_task = tokio::spawn(async move {
         if let Err(err) = axum::serve(http_listener, router(frontend)).await {
