@@ -84,7 +84,12 @@ pub(super) async fn get_exam(arguments: serde_json::Value)->Result<String,String
             text.push_str(&format!("分值：{points}\n"));
         }
         if let Some(url) = &assignment.html_url {
-            text.push_str(&format!("链接：https://oc.sjtu.edu.cn{url}\n"));
+            // Canvas 的 html_url 通常已是完整地址，只有相对路径才补域名
+            if url.starts_with("http") {
+                text.push_str(&format!("链接：{url}\n"));
+            } else {
+                text.push_str(&format!("链接：https://oc.sjtu.edu.cn{url}\n"));
+            }
         }
 
         let detail_url = format!(

@@ -755,35 +755,54 @@ async fn upload_submission_file(
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|err| err.to_string())?;
-    let mut response = uploader
+    let response = uploader
         .post(&ticket.upload_url)
         .multipart(form)
         .send()
         .await
         .map_err(|err| format!("上传 {name} 失败: {err}"))?;
 
-    if response.status().is_redirection() {
-        let location = response
-            .headers()
-            .get("location")
-            .and_then(|value| value.to_str().ok())
-            .ok_or_else(|| format!("上传 {name} 后缺少确认地址"))?
-            .to_string();
-        let confirm = client.get(&location);
-        let confirm = if location.starts_with("https://oc.sjtu.edu.cn") {
-            confirm.bearer_auth(token)
-        } else {
-            confirm
-        };
-        response = confirm
-            .send()
-            .await
-            .map_err(|err| format!("确认上传 {name} 失败: {err}"))?;
-    }
-    if !response.status().is_success() {
+    // Canvas 的第三步有两种形式：3XX 跳到确认地址；或 201 直接给出文件，
+    // 有的存储后端（inst-fs）在 201 里只给 location，也要再 GET 一次才算确认。
+    let status = response.status();
+    if !status.is_success() && !status.is_redirection() {
         return Err(canvas_failure(response, &format!("上传 {name} ")).await);
     }
+    let header_location = response
+        .headers()
+        .get("location")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let body: serde_json::Value = if status.is_redirection() {
+        serde_json::Value::Null
+    } else {
+        response.json().await.unwrap_or(serde_json::Value::Null)
+    };
+    if let Some(id) = body["id"].as_u64() {
+        return Ok(id);
+    }
+    let location = body["location"]
+        .as_str()
+        .map(str::to_string)
+        .or(header_location)
+        .ok_or_else(|| format!("上传 {name} 后既没有文件 id 也没有确认地址：{body}"))?;
+    let location = reqwest::Url::parse(&ticket.upload_url)
+        .and_then(|base| base.join(&location))
+        .map_err(|err| format!("上传 {name} 的确认地址无效（{location}）: {err}"))?;
 
+    let confirm = client.get(location.clone());
+    let confirm = if location.host_str() == Some("oc.sjtu.edu.cn") {
+        confirm.bearer_auth(token)
+    } else {
+        confirm
+    };
+    let response = confirm
+        .send()
+        .await
+        .map_err(|err| format!("确认上传 {name} 失败: {err}"))?;
+    if !response.status().is_success() {
+        return Err(canvas_failure(response, &format!("确认上传 {name} ")).await);
+    }
     let file: serde_json::Value = response
         .json()
         .await

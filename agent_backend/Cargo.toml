@@ -29,3 +29,6 @@ crossterm = "0.29.0"
 futures-util = "0.3.34"
 tokio-tungstenite = "0.29.0"
 unicode-width = "0.2.2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

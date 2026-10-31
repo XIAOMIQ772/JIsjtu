@@ -29,6 +29,7 @@ dependencies = [
  "dotenvy",
  "futures-util",
  "imap",
+ "libc",
  "mail-parser",
  "mime_guess",
  "native-tls",
