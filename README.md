@@ -51,8 +51,10 @@ JIsjtu
 | `EMAIL_USER_ACCOUNT` / `EMAIL_USER_PASSWORD` | jAccount 账号或交大邮箱地址，以及 jAccount 登录密码 |
 | `IMAP_PASSWORD` | 可选，独立的邮箱密码或客户端授权码；留空时沿用 `EMAIL_USER_PASSWORD` |
 | `IMAP_HOST` / `IMAP_PORT` | 邮箱服务器；学校邮箱可设置 `imap.sjtu.edu.cn`、`993` |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_PASSWORD` | 发信默认使用 `mail.sjtu.edu.cn:465`（TLS）。未单设密码时依次使用 `IMAP_PASSWORD`、`EMAIL_USER_PASSWORD` |
 | `AGENT_BIND_ADDR` | HTTP 和 TCP 共用的监听 IP，默认 `127.0.0.1`。需要局域网访问时可指定本机的局域网 IP |
 | `AGENT_HTTP_PORT` / `AGENT_TCP_PORT` | HTTP 与 TCP 端口，默认 `13376` / `8081` |
+| `AGENT_REMINDERS` | macOS 运行期间提醒上课与作业截止，设为 `0` 可关闭 |
 | `AGENT_NO_BROWSER` | 设置此变量可跳过自动打开浏览器 |
 | `AGENT_FRONTEND_DIR` | 可选，指定前端静态文件目录 |
 | `AGENT_SKILLS_DIR` | 可选，指定技能目录；默认找当前目录或上一级的 `skills/` |
@@ -76,9 +78,11 @@ JIsjtu
 | 平时成绩与评语 | `get_grades`：逐项得分、班级均分/最高/最低、权重、老师评语 | Canvas |
 | 找空教室 | `find_classroom`：按教学周算空闲节次，附教室实时人数；也能查某间教室当天课表 | 教室信息服务（公开） |
 | 图书馆人多吗 | `library_status`：各馆在馆人数与占比 | 图书馆人数统计（公开） |
-| 水源 | `get_hotnews` 热帖简报、`shuiyuan_search` 搜索（选课评价等）、`shuiyuan_topic` 读帖子 | 水源社区 |
-| 邮件 | `mail_fetch`：列出、阅读、按关键词搜索、下载附件（只读） | 学校邮箱 |
-| 读课件、文档 | `pdf_analysis`（PDF）、`read_office`（pptx 含讲者备注、docx 含表格、xlsx） | 本地文件 |
+| 水源 | `get_hotnews` 热帖简报、`shuiyuan_search` 搜索、`shuiyuan_topic` 读帖子、`shuiyuan_post` 查看版块、发表主题或回帖 | 水源社区 |
+| 邮件 | `mail_fetch` 列出、阅读、搜索、下载附件，`send_email` 发送纯文本邮件 | 学校邮箱 |
+| 找课件、下载整门课 | `search_files` 跨课程搜索，`course_files` 的 `download_all` 下载指定课程中可访问的全部文件，默认目录为 `~/Downloads/Canvas-<课程id>`。文件名带 Canvas ID，重跑会跳过已有且大小匹配的文件 | Canvas |
+| 读课件、文档 | `pdf_analysis` 读取 PDF，在 macOS 上自动用 Vision 离线识别扫描页。`read_office` 读取 pptx（含讲者备注）、docx（含表格）和 xlsx | 本地文件 |
+| 上课、作业主动提醒 | 程序运行期间，macOS 在上课前 10 分钟、未完成作业截止前 1 小时发送通知。课表需要已登录的教务会话，作业需要 Canvas 令牌 | 教务系统、Canvas |
 | 导入手机日历 | `export_calendar`：课表按周展开、考试、未交作业截止导出为 .ics，带提醒 | 教务系统、Canvas |
 
 所有时间按北京时间输出。内置 2026–2027 秋季学期从 9 月 14 日开始，共 18 周，第 17–18 周为考试周。第 1 节课 08:00 开始，每节 45 分钟。截至 2026 年 11 月 26 日，教务处校历目录仅列出该学年的秋季学期。春季校历公布后，可按官方日期在 `.env` 填写 `SJTU_TERM_START` 和 `SJTU_TERM_WEEKS`。[教务处历年校历](https://jwc.sjtu.edu.cn/jxxl/lnxl.htm)
@@ -86,6 +90,8 @@ JIsjtu
 教务系统和水源需要 jAccount 登录态：浏览器助手先在后台打开站点入口页走完单点登录，再在同一页面里请求查询接口，多项查询共用一次浏览器会话；jAccount 会话过期时会自动重新登录一次。
 
 同一轮里模型发出的多个只读查询会并发执行，结果仍按调用顺序返回；命令、写文件、提交作业等有副作用的调用保持顺序执行。
+
+代发邮件或水源帖子时，先核对会话中显示的收件人、版块或主题和完整正文，然后在同一会话回复预览给出的 `确认发送 <口令>`。口令 15 分钟内有效，每个会话只保留最新一份待发草稿。
 
 配置好后可以先自检，逐项确认模型、Canvas、邮箱、Python 依赖、浏览器、jAccount 与校历是否可用：
 
@@ -182,7 +188,7 @@ description: 校园卡余额与消费记录查询流程
 | `course-selection-research` | 选课调研：水源多关键词检索、精读帖子、核对课表冲突，给出有出处的对比 |
 | `exam-review-plan` | 按真实考试时间与剩余作业倒排复习计划，整理薄弱科目课件重点 |
 | `weekly-study-plan` | 结合课表空档、DDL 与考试排一周学习计划，并推荐自习地点 |
-| `email-to-teacher` | 请假、延期、成绩疑问等邮件的标题与正文草稿（只起草不代发） |
+| `email-to-teacher` | 起草请假、延期、成绩疑问等邮件，在用户确认后代发 |
 | `lecture-notes` | 下载课件、分页阅读，整理概念、公式、易错点与自测题 |格式细节和目录查找顺序见 [skills/README.md](skills/README.md)。
 
 ## 从源码运行
