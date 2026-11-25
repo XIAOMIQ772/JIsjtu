@@ -4,6 +4,8 @@ use super::clip;
 
 const MAIL_TIMEOUT_SECS: u64 = 30;
 const MAIL_MAX_LIMIT: usize = 50;
+const MAIL_DEFAULT_SCAN: usize = 200;
+const MAIL_MAX_SCAN: usize = 2000;
 
 struct MailConfig {
     host: String,
@@ -208,10 +210,11 @@ fn mail_read(session: &mut MailSession, folder: &str, uid: u32) -> Result<String
 
     let attachments: Vec<_> = parsed.attachments().collect();
     if !attachments.is_empty() {
-        text.push_str("附件：\n");
-        for attachment in attachments {
+        text.push_str("附件（可用 action=attachment 加序号下载）：\n");
+        for (index, attachment) in attachments.iter().enumerate() {
             text.push_str(&format!(
-                "  - {}（{} 字节）\n",
+                "  {}. {}（{} 字节）\n",
+                index + 1,
                 attachment.attachment_name().unwrap_or("(未命名)"),
                 attachment.len()
             ));
@@ -242,26 +245,185 @@ fn mail_folders(session: &mut MailSession) -> Result<String, String> {
     Ok(text)
 }
 
-fn run_mail(
+/// 关键词同时匹配发件人和主题，不区分大小写。
+fn header_matches(keyword: &str, from: &str, subject: &str) -> bool {
+    let keyword = keyword.to_lowercase();
+    from.to_lowercase().contains(&keyword) || subject.to_lowercase().contains(&keyword)
+}
+
+/// IMAP 的 SEARCH 处理中文需要服务器支持 CHARSET，各家实现不一；这里取最近 scan 封的
+/// 邮件头在本地匹配，结果稳定。
+fn mail_search(session: &mut MailSession, folder: &str, keyword: &str, limit: usize, scan: usize) -> Result<String, String> {
+    session.examine(folder).map_err(|err| format!("打开 {folder} 失败: {err}"))?;
+    let mut uids: Vec<u32> = session
+        .uid_search("ALL")
+        .map_err(|err| format!("搜索邮件失败: {err}"))?
+        .into_iter()
+        .collect();
+    uids.sort_unstable();
+    let scanned: Vec<u32> = uids.iter().rev().take(scan).copied().collect();
+    if scanned.is_empty() {
+        return Ok(format!("{folder} 里没有邮件。"));
+    }
+    let messages = session
+        .uid_fetch(uid_set(&scanned), "(FLAGS BODY.PEEK[HEADER])")
+        .map_err(|err| format!("读取邮件头失败: {err}"))?;
+    let parser = mail_parser::MessageParser::default();
+    let mut hits: Vec<(u32, String)> = Vec::new();
+    for message in messages.iter() {
+        let Some(parsed) = message.header().and_then(|raw| parser.parse(raw)) else { continue };
+        let from = parsed.from().and_then(|list| list.first()).map(format_addr).unwrap_or_default();
+        let subject = parsed.subject().unwrap_or("(无主题)").to_string();
+        if !header_matches(keyword, &from, &subject) {
+            continue;
+        }
+        let uid = message.uid.unwrap_or(0);
+        let seen = message.flags().iter().any(|flag| matches!(flag, imap::types::Flag::Seen));
+        let date = parsed.date().map(|date| date.to_rfc3339()).unwrap_or_default();
+        hits.push((
+            uid,
+            format!(
+                "  UID {uid} [{}]\n    发件人：{}\n    主题：{}\n    时间：{date}\n",
+                if seen { "已读" } else { "未读" },
+                one_line(&from),
+                one_line(&subject)
+            ),
+        ));
+    }
+    hits.sort_by_key(|(uid, _)| std::cmp::Reverse(*uid));
+    let total = hits.len();
+    let mut text = format!(
+        "在 {folder} 最近 {} 封邮件中，发件人或主题包含「{keyword}」的有 {total} 封",
+        scanned.len()
+    );
+    if total > limit {
+        text.push_str(&format!("，下面是最新的 {limit} 封"));
+    }
+    text.push_str("：\n");
+    for (_, line) in hits.iter().take(limit) {
+        text.push_str(line);
+    }
+    if total == 0 && scanned.len() < uids.len() {
+        text.push_str(&format!("没有找到。可以增大 scan（当前 {scan}）搜索更早的邮件。\n"));
+    }
+    text.push_str("\n要读某一封的正文，用 action=read 和对应的 uid。");
+    Ok(clip(&text))
+}
+
+/// 按序号（从 1 开始）或文件名片段选附件。
+fn pick_attachment(names: &[String], which: &str) -> Result<usize, String> {
+    let which = which.trim();
+    if names.is_empty() {
+        return Err("这封邮件没有附件".into());
+    }
+    if let Ok(number) = which.parse::<usize>() {
+        return (1..=names.len())
+            .contains(&number)
+            .then(|| number - 1)
+            .ok_or_else(|| format!("附件序号应在 1 到 {} 之间", names.len()));
+    }
+    let needle = which.to_lowercase();
+    let matched: Vec<usize> = (0..names.len())
+        .filter(|index| names[*index].to_lowercase().contains(&needle))
+        .collect();
+    match matched.as_slice() {
+        [index] => Ok(*index),
+        [] => Err(format!("没有名称包含「{which}」的附件，附件有：{}", names.join("、"))),
+        _ => Err(format!("有多个附件匹配「{which}」，请改用序号：{}", names.join("、"))),
+    }
+}
+
+/// 附件名来自邮件，只取最后一段文件名，防止“../”之类的路径跳出下载目录。
+fn attachment_target(name: &str, uid: u32, index: usize, save_path: Option<&str>) -> std::path::PathBuf {
+    if let Some(path) = save_path.map(str::trim).filter(|path| !path.is_empty()) {
+        return std::path::PathBuf::from(path);
+    }
+    let file = std::path::Path::new(name.trim())
+        .file_name()
+        .map(|file| file.to_string_lossy().into_owned())
+        .filter(|file| !file.is_empty() && file != "." && file != "..")
+        .unwrap_or_else(|| format!("mail-{uid}-attachment-{}", index + 1));
+    std::env::var("HOME")
+        .map(|home| std::path::PathBuf::from(home).join("Downloads"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .join(file)
+}
+
+fn mail_attachment(session: &mut MailSession, folder: &str, uid: u32, which: &str, save_path: Option<&str>) -> Result<String, String> {
+    session.examine(folder).map_err(|err| format!("打开 {folder} 失败: {err}"))?;
+    let messages = session
+        .uid_fetch(uid.to_string(), "BODY.PEEK[]")
+        .map_err(|err| format!("读取邮件失败: {err}"))?;
+    let raw = messages
+        .iter()
+        .find_map(|message| message.body())
+        .ok_or_else(|| format!("{folder} 里没有 uid 为 {uid} 的邮件"))?;
+    let parsed = mail_parser::MessageParser::default()
+        .parse(raw)
+        .ok_or_else(|| "这封邮件解析失败".to_string())?;
+    let attachments: Vec<_> = parsed.attachments().collect();
+    let names: Vec<String> = attachments
+        .iter()
+        .map(|attachment| attachment.attachment_name().unwrap_or("(未命名)").to_string())
+        .collect();
+    let index = pick_attachment(&names, which)?;
+    let target = attachment_target(&names[index], uid, index, save_path);
+    if let Some(parent) = target.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).map_err(|err| format!("创建目录 {} 失败: {err}", parent.display()))?;
+    }
+    let contents = attachments[index].contents();
+    std::fs::write(&target, contents).map_err(|err| format!("写入 {} 失败: {err}", target.display()))?;
+    Ok(format!(
+        "已把附件「{}」保存到 {}（{} 字节）。PDF 可用 pdf_analysis 阅读，文本文件可用 read。",
+        names[index],
+        target.display(),
+        contents.len()
+    ))
+}
+
+struct MailRequest {
     action: String,
     folder: String,
     limit: usize,
     uid: Option<u32>,
     unread_only: bool,
-) -> Result<String, String> {
+    keyword: Option<String>,
+    scan: usize,
+    attachment: Option<String>,
+    save_path: Option<String>,
+}
+
+fn run_mail(request: MailRequest) -> Result<String, String> {
+    // 先校验参数，避免无意义地连接邮箱
+    let needs_uid = |action: &str| {
+        request
+            .uid
+            .ok_or_else(|| format!("action={action} 时必须给出 uid，可先用 action=list 或 search 查看"))
+    };
+    match request.action.as_str() {
+        "read" | "attachment" => {
+            needs_uid(&request.action)?;
+        }
+        "search" if request.keyword.is_none() => return Err("action=search 时需要 keyword".into()),
+        "list" | "folders" | "search" => {}
+        other => return Err(format!("未知的 action「{other}」，只支持 list / read / search / attachment / folders")),
+    }
     let config = MailConfig::from_env()?;
     let mut session = mail_connect(&config)?;
-
-    let result = match action.as_str() {
-        "list" => mail_list(&mut session, &folder, limit, unread_only),
-        "read" => {
-            let uid = uid.ok_or_else(|| "action=read 时必须给出 uid，可先用 action=list 查看".to_string())?;
-            mail_read(&mut session, &folder, uid)
-        }
-        "folders" => mail_folders(&mut session),
-        other => Err(format!("未知的 action「{other}」，只支持 list / read / folders")),
+    let folder = request.folder.as_str();
+    let result = match request.action.as_str() {
+        "list" => mail_list(&mut session, folder, request.limit, request.unread_only),
+        "read" => mail_read(&mut session, folder, needs_uid("read")?),
+        "search" => mail_search(&mut session, folder, request.keyword.as_deref().unwrap_or_default(), request.limit, request.scan),
+        "attachment" => mail_attachment(
+            &mut session,
+            folder,
+            needs_uid("attachment")?,
+            request.attachment.as_deref().unwrap_or("1"),
+            request.save_path.as_deref(),
+        ),
+        _ => mail_folders(&mut session),
     };
-
     let _ = session.logout();
     result
 }
@@ -335,9 +497,62 @@ pub(super) async fn mail_fetch(arguments: serde_json::Value) -> Result<String, S
         serde_json::Value::String(text) => text.trim().parse().ok(),
         _ => None,
     };
-    let unread_only = arguments["unread_only"].as_bool().unwrap_or(false);
+    let text_arg = |key: &str| {
+        arguments[key]
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    let request = MailRequest {
+        action,
+        folder,
+        limit,
+        uid,
+        unread_only: arguments["unread_only"].as_bool().unwrap_or(false),
+        keyword: text_arg("keyword"),
+        scan: arguments["scan"].as_u64().map_or(MAIL_DEFAULT_SCAN, |scan| (scan as usize).clamp(1, MAIL_MAX_SCAN)),
+        attachment: text_arg("attachment").or_else(|| arguments["attachment"].as_u64().map(|n| n.to_string())),
+        save_path: text_arg("save_path"),
+    };
 
-    tokio::task::spawn_blocking(move || run_mail(action, folder, limit, uid, unread_only))
+    tokio::task::spawn_blocking(move || run_mail(request))
         .await
         .map_err(|err| format!("邮件任务失败: {err}"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn search_matches_sender_or_subject_ignoring_case() {
+        assert!(header_matches("canvas", "Canvas@SJTU <notifications@oc.sjtu.edu.cn>", "作业提醒"));
+        assert!(header_matches("奖学金", "学生处 <xsc@sjtu.edu.cn>", "关于2026年奖学金评定的通知"));
+        assert!(!header_matches("讲座", "教务处", "选课通知"));
+    }
+
+    #[test]
+    fn attachments_are_picked_by_number_or_name_and_saved_safely() {
+        let names = vec!["实验指导书.pdf".to_string(), "评分标准.xlsx".to_string(), "实验数据.pdf".to_string()];
+        assert_eq!(pick_attachment(&names, "2"), Ok(1));
+        assert_eq!(pick_attachment(&names, "评分"), Ok(1));
+        assert!(pick_attachment(&names, "实验").unwrap_err().contains("多个附件"));
+        assert!(pick_attachment(&names, "4").unwrap_err().contains("1 到 3"));
+        assert!(pick_attachment(&[], "1").unwrap_err().contains("没有附件"));
+        let target = attachment_target("../../.ssh/authorized_keys", 7, 0, None);
+        assert!(target.ends_with("Downloads/authorized_keys"), "{}", target.display());
+        assert!(attachment_target("..", 7, 1, None).ends_with("Downloads/mail-7-attachment-2"));
+        assert_eq!(attachment_target("a.pdf", 7, 0, Some("/tmp/x.pdf")), std::path::PathBuf::from("/tmp/x.pdf"));
+    }
+
+    #[tokio::test]
+    async fn bad_mail_requests_fail_before_connecting() {
+        let error = mail_fetch(serde_json::json!({"action": "search"})).await.unwrap_err();
+        assert!(error.contains("keyword"), "{error}");
+        let error = mail_fetch(serde_json::json!({"action": "attachment"})).await.unwrap_err();
+        assert!(error.contains("uid"), "{error}");
+        let error = mail_fetch(serde_json::json!({"action": "delete"})).await.unwrap_err();
+        assert!(error.contains("未知的 action"), "{error}");
+    }
 }

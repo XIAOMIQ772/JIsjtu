@@ -573,33 +573,26 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
         function: (FunctionObject {
             name: "mail_fetch".to_string(),
             description: Some(
-                "通过 IMAP 读取学校邮箱。可以列出某个文件夹里的邮件、读取某一封的正文、\
-                 或列出所有文件夹。只读，不会改动已读状态。".to_string(),
+                "通过 IMAP 读取学校邮箱（只读，不改变已读状态）。list 列出某文件夹最新邮件；read 读某一封正文并列出带序号的附件；\
+                 search 按关键词匹配最近邮件的发件人和主题（如“奖学金”“Canvas”“讲座”“教务处”）；\
+                 attachment 把某封邮件的附件保存到本地（默认 ~/Downloads），之后可用 pdf_analysis 或 read 阅读；folders 列出文件夹。".to_string(),
             ),
             parameters: Some(json!({
                 "type":"object",
                 "properties":{
                     "action":{
                         "type":"string",
-                        "enum":["list","read","folders"],
-                        "description":"list=列出邮件;read=读某一封的正文;folders=列出所有文件夹"
+                        "enum":["list","read","search","attachment","folders"],
+                        "description":"list=列出邮件；read=读正文；search=按关键词找邮件；attachment=下载附件；folders=列出文件夹"
                     },
-                    "folder":{
-                        "type":"string",
-                        "description":"文件夹名，默认 INBOX。用 action=folders 查看有哪些"
-                    },
-                    "limit":{
-                        "type":"integer",
-                        "description":"list 时最多返回几封，默认 10，上限 50"
-                    },
-                    "uid":{
-                        "type":"integer",
-                        "description":"action=read 时必填，来自 list 结果里的 UID"
-                    },
-                    "unread_only":{
-                        "type":"boolean",
-                        "description":"list 时只列未读邮件"
-                    }
+                    "folder":{"type":"string","description":"文件夹名，默认 INBOX"},
+                    "limit":{"type":"integer","description":"list/search 最多返回几封，默认 10，上限 50"},
+                    "uid":{"type":"integer","description":"read/attachment 时必填，来自 list 或 search 结果里的 UID"},
+                    "unread_only":{"type":"boolean","description":"list 时只列未读邮件"},
+                    "keyword":{"type":"string","description":"search 的关键词，匹配发件人或主题"},
+                    "scan":{"type":"integer","description":"search 时检查最近多少封邮件，默认 200，上限 2000"},
+                    "attachment":{"type":"string","description":"attachment 时要下载的附件序号（从 1 开始）或文件名片段，默认第 1 个"},
+                    "save_path":{"type":"string","description":"attachment 时保存的完整路径，不传则存到 ~/Downloads/<附件名>"}
                 },
                 "required":["action"],
                 "additionalProperties":false
