@@ -285,6 +285,46 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
     }),
     ChatCompletionTools::Function(ChatCompletionTool {
         function: (FunctionObject {
+            name: "shuiyuan_search".to_string(),
+            description: Some(
+                "在水源社区搜索帖子，返回相关帖子（标题、链接、楼数、点赞、时间）及命中楼层摘要。\
+                 适合查选课评价、老师口碑、给分情况、考试经验、校园生活问题（如“高数 选课”“某老师 给分”“保研 经验”）。\
+                 支持 Discourse 搜索语法：order:latest 按时间排序、in:title 只搜标题、after:2025-01-01 限定时间。\
+                 要读完整讨论用 shuiyuan_topic。".to_string(),
+            ),
+            parameters: Some(json!({
+                "type":"object",
+                "properties":{
+                    "query":{"type":"string","description":"搜索词，至少两个字；用课程简称、老师姓名等关键词效果更好"},
+                    "limit":{"type":["integer","null"],"description":"最多返回几个帖子，1 到 20，null 表示 10"}
+                },
+                "required":["query","limit"],
+                "additionalProperties":false
+            })),
+            strict: Some(true),
+        }),
+    }),
+    ChatCompletionTools::Function(ChatCompletionTool {
+        function: (FunctionObject {
+            name: "shuiyuan_topic".to_string(),
+            description: Some(
+                "阅读水源上的某个帖子：标题、楼主正文和各楼回复（作者、时间、点赞、回复关系），每次约 20 楼，\
+                 可用 start 往后翻页。帖子 id 来自 shuiyuan_search 或 get_hotnews，也可以直接传帖子链接。".to_string(),
+            ),
+            parameters: Some(json!({
+                "type":"object",
+                "properties":{
+                    "topic_id":{"type":"string","description":"帖子 id 或帖子链接"},
+                    "start":{"type":["integer","null"],"description":"从第几楼开始读，null 表示从 1 楼开始"}
+                },
+                "required":["topic_id","start"],
+                "additionalProperties":false
+            })),
+            strict: Some(true),
+        }),
+    }),
+    ChatCompletionTools::Function(ChatCompletionTool {
+        function: (FunctionObject {
             name: "get_time_stamp".to_string(),
             description: Some(
                 "获取当前北京时间、星期、交大校历的教学周（是否考试周、节假日）以及当前处于第几节课。\

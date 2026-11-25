@@ -21,6 +21,7 @@ mod open_usual_website;
 mod pdf_analysis;
 mod read;
 mod shuiyuan;
+mod shuiyuan_search;
 mod text;
 mod watch_eduinfo;
 mod watch_shuiyuan;
@@ -47,6 +48,8 @@ pub async fn call(name: &str, arguments: serde_json::Value) -> Result<String, St
         "library_status"=>library_status::library_status(arguments).await,
         "get_hotnews"=>get_hotnews::get_hotnews(arguments).await,
         "watch_shuiyuan"=>watch_shuiyuan::watch_shuiyuan(arguments).await,
+        "shuiyuan_search"=>shuiyuan_search::shuiyuan_search(arguments).await,
+        "shuiyuan_topic"=>shuiyuan_search::shuiyuan_topic(arguments).await,
         "pdf_analysis"=>pdf_analysis::pdf_analysis(arguments).await,
         "course_files"=>course_files::course_files(arguments).await,
         "watch_eduinfo"=>watch_eduinfo::watch_eduinfo(arguments).await,
