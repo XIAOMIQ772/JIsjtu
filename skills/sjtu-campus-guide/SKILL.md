@@ -31,7 +31,7 @@ description: 交大校园常识速查：常用系统入口与用途、校历与�
 - 今天/最近有什么安排：daily_brief
 - 课表、下节课在哪：class_schedule（day=today/tomorrow/this_week/next_week/all）
 - 考试时间与考场：exam_schedule
-- 期末成绩、GPA：score_report（教务系统，官方口径）
+- 期末成绩和绩点估算用 score_report。用户问官方 GPA、学积分或排名时用 score_report 的 view=official，给出本人查询入口与学院证明办理方式。
 - 离毕业还差多少学分、哪类课还没修够：degree_progress
 - 平时作业分数、老师评语：get_grades（Canvas）
 - 作业截止：跨课程用 get_deadlines，单门课细节用 get_exam
@@ -48,7 +48,7 @@ description: 交大校园常识速查：常用系统入口与用途、校历与�
 
 - 2026-2027 学年秋季学期：2026 年 9 月 14 日（周一）为第 1 周，共 18 周，第 17–18 周为考试周；寒假 2027 年 1 月 18 日至 2 月 16 日。
 - 放假：中秋 9 月 25 日；国庆 10 月 1–3 日；元旦 1 月 1 日；春节 2 月 5–8 日。
-- 新学期校历公布后需要更新程序内置校历，或在 .env 设置 SJTU_TERM_START（第 1 周周一的日期）。
+- 截至 2026 年 11 月 26 日，教务处尚未在校历目录列出 2027 年春季学期。校历公布后可在 .env 设置 SJTU_TERM_START（第 1 周周一）与 SJTU_TERM_WEEKS（学期周数）。[教务处校历目录](https://jwc.sjtu.edu.cn/jxxl/lnxl.htm)
 
 节次时间（第 1–14 节，每节 45 分钟）：
 
@@ -78,9 +78,9 @@ description: 交大校园常识速查：常用系统入口与用途、校历与�
 - D：60–61 → 1.0
 - F：60 以下 → 0
 
-总 GPA = Σ(课程绩点 × 学分) / Σ学分；P/F（通过/不通过）课程只计学分不计绩点。score_report 已按此计算。用户问“还要考多少才能到某个 GPA”时：
+按课程估算 GPA 时，分母取参与绩点计算的学分。成绩 P 按规定不计入，F 以 0 绩点计入。目标 GPA 可按下列方法估算。[本科生学习指南](https://sais.sjtu.edu.cn/upload/file/20250905/20250905105711.pdf)
 
-1. 用 score_report 拿到已修学分 C₀ 与当前 GPA g₀。
+1. 用 score_report 拿到当前 GPA g₀，并将此次计入绩点的课程学分合计为 C₀。
 2. 设剩余课程总学分为 C₁、目标为 G，则剩余课程需要的平均绩点 = (G × (C₀ + C₁) − g₀ × C₀) / C₁。
 3. 结果高于 4.3 时如实说明无法达到；把需要的绩点换算回上表的等级，给出“剩下的课平均要拿到 A- 以上”这样的说法。
 

@@ -77,7 +77,7 @@ pub(super) fn render(brief: &Brief) -> String {
                 text.push_str(&format!("，{holiday}放假"));
             }
         }
-        None => text.push_str("，当前不在教学周内"),
+        None => text.push_str("，当前日期不在已知学期的教学周内"),
     }
     text.push_str(&format!("，现在 {:02}:{:02}。\n", now.hour(), now.minute()));
 

@@ -107,6 +107,8 @@ struct KnownTerm {
     holidays: &'static [((i32, u32, u32), &'static str)],
 }
 
+pub(super) const CALENDAR_URL: &str = "https://jwc.sjtu.edu.cn/jxxl/lnxl.htm";
+
 /// 教务处公布的校历（jwc.sjtu.edu.cn → 教学校历）。新学期公布后在这里补一行，
 /// 或在 .env 设置 SJTU_TERM_START 临时覆盖。
 const KNOWN_TERMS: &[KnownTerm] = &[KnownTerm {
@@ -318,6 +320,8 @@ pub(super) fn describe_now(now: DateTime<FixedOffset>) -> String {
                     term.name,
                     term.start.format("%Y-%m-%d")
                 ));
+            } else {
+                text.push_str(&format!("。新学期第 1 周周一和总周数请查教务处校历 {CALENDAR_URL}"));
             }
             text.push('\n');
         }

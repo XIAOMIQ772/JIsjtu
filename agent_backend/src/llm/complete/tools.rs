@@ -577,16 +577,17 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
         function: (FunctionObject {
             name: "score_report".to_string(),
             description: Some(
-                "从教务系统读取本人各学期课程成绩与绩点，按学分加权计算总 GPA、各学期 GPA 和加权均分（P/F 课程不计入绩点），\
+                "从教务系统读取本人各学期课程成绩与绩点，按学分估算总 GPA、各学期 GPA 和加权均分（P 不计绩点，F 按 0 计），\
                  并列出每门课的学分、成绩、绩点、考试性质。用户问“我的 GPA”“这学期成绩出了吗”“哪门课分低”时使用。\
-                 Canvas 上的平时作业分数用 get_grades。".to_string(),
+                 问教务处正式 GPA 或学积分排名时使用 view=official 查看官方查询途径。Canvas 上的平时作业分数用 get_grades。".to_string(),
             ),
             parameters: Some(json!({
                 "type":"object",
                 "properties":{
-                    "term":{"type":["string","null"],"description":"只看某学期，如 2025-2026-2；null 表示全部学期"}
+                    "term":{"type":["string","null"],"description":"只看某学期，如 2025-2026-2；null 表示全部学期"},
+                    "view":{"type":["string","null"],"enum":["courses","official",null],"description":"courses 或 null 查询成绩并估算 GPA，official 查看本人官方 GPA 和排名的查询途径"}
                 },
-                "required":["term"],
+                "required":["term","view"],
                 "additionalProperties":false
             })),
             strict: Some(true),

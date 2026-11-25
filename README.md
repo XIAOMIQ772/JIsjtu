@@ -56,7 +56,7 @@ JIsjtu
 | `AGENT_NO_BROWSER` | 设置此变量可跳过自动打开浏览器 |
 | `AGENT_FRONTEND_DIR` | 可选，指定前端静态文件目录 |
 | `AGENT_SKILLS_DIR` | 可选，指定技能目录；默认找当前目录或上一级的 `skills/` |
-| `SJTU_TERM_START` / `SJTU_TERM_WEEKS` / `SJTU_TERM_NAME` | 可选，新学期校历尚未内置时覆盖：第 1 周周一的日期（如 `2027-02-22`）、总周数（默认 18）、学期名称 |
+| `SJTU_TERM_START` / `SJTU_TERM_WEEKS` / `SJTU_TERM_NAME` | 可按教务处校历填写第 1 周周一（YYYY-MM-DD）、总周数（默认 18）和学期名称 |
 
 模型配置用于对话；Canvas 和邮箱配置按需填写。
 
@@ -69,7 +69,7 @@ JIsjtu
 | 今天有什么安排 | `daily_brief`：今天（晚上附明天）的课、14 天内考试、48 小时内截止和逾期作业、24 小时内公告、未读邮件，并发获取 | 教务系统、Canvas、邮箱 |
 | 课表、下节课在哪 | `class_schedule`：今天/明天/本周/下周/整学期，按教学周与单双周过滤 | 教学信息服务网 |
 | 考试时间与考场 | `exam_schedule`：倒计时、考场、未公布标注 | 教学信息服务网 |
-| 成绩与 GPA | `score_report`：按学分加权的总 GPA、学期 GPA、加权均分（P/F 不计入） | 教学信息服务网 |
+| 成绩、GPA 和排名 | `score_report` 根据本人成绩估算总 GPA、学期 GPA 和加权均分。`view=official` 提供官方本人查询入口及学院排名证明办理方式 | 教学信息服务网、学院办事指南 |
 | 离毕业还差什么 | `degree_progress`：培养方案各类要求的要求/已获得学分与缺口 | 教学信息服务网 |
 | 作业截止 | `get_deadlines`（跨课程）、`get_exam`（单门课，含提交状态） | Canvas |
 | 课程公告 | `get_announcements` | Canvas |
@@ -81,7 +81,7 @@ JIsjtu
 | 读课件、文档 | `pdf_analysis`（PDF）、`read_office`（pptx 含讲者备注、docx 含表格、xlsx） | 本地文件 |
 | 导入手机日历 | `export_calendar`：课表按周展开、考试、未交作业截止导出为 .ics，带提醒 | 教务系统、Canvas |
 
-所有时间按北京时间输出；教学周按内置校历计算（目前内置 2026-2027 学年秋季学期：9 月 14 日为第 1 周，共 18 周，第 17–18 周为考试周），节次按交大作息（第 1 节 08:00 起，每节 45 分钟）。新学期校历公布后可在 `.env` 设置 `SJTU_TERM_START` 临时覆盖。
+所有时间按北京时间输出。内置 2026–2027 秋季学期从 9 月 14 日开始，共 18 周，第 17–18 周为考试周。第 1 节课 08:00 开始，每节 45 分钟。截至 2026 年 11 月 26 日，教务处校历目录仅列出该学年的秋季学期。春季校历公布后，可按官方日期在 `.env` 填写 `SJTU_TERM_START` 和 `SJTU_TERM_WEEKS`。[教务处历年校历](https://jwc.sjtu.edu.cn/jxxl/lnxl.htm)
 
 教务系统和水源需要 jAccount 登录态：浏览器助手先在后台打开站点入口页走完单点登录，再在同一页面里请求查询接口，多项查询共用一次浏览器会话；jAccount 会话过期时会自动重新登录一次。
 

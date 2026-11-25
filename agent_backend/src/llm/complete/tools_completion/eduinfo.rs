@@ -239,7 +239,7 @@ pub(super) fn render_day(classes: &[Class], date: NaiveDate, now: chrono::DateTi
     };
     let day = format!("{prefix}{}月{}日 {}", date.month(), date.day(), weekday_cn(date.weekday()));
     let Some(info) = campus_time::week_of(date) else {
-        return format!("{day} 不在已知学期的教学周内，没有按周次排的课。可传 day=all 查看整学期课表。");
+        return format!("{day} 不在已知学期的教学周内，无法判断当天是否有课。可传 day=all 查看整学期课表。");
     };
     let mut text = format!("{day}（第 {} 周", info.week);
     if info.is_exam_week() {
@@ -383,7 +383,7 @@ pub(super) async fn class_schedule(arguments: Value) -> Result<String, String> {
         (true, None, "next_week", Some(info)) => render_week(&classes, info, info.week + 1),
         (true, None, _, _) if date.is_some() => render_day(&classes, date.unwrap_or(today), now),
         // 假期里没有当前教学周，只能给整学期视图
-        _ => format!("当前不在教学周内。\n{}", render_all(&classes, term)),
+        _ => format!("当前日期不在已知学期的教学周内。\n{}", render_all(&classes, term)),
     };
     Ok(clip(&text))
 }
@@ -555,10 +555,10 @@ pub(super) struct Gpa {
     pub credits: f64,
     pub gpa: Option<f64>,
     pub average: Option<f64>,
-    pub pass_fail: usize,
+    pub without_points: usize,
 }
 
-/// 按学分加权：绩点为空的（P/F 等）不计入绩点，但计入已获学分。
+/// 按学分加权。通过制 P 不计绩点，F 为 0 绩点。
 pub(super) fn gpa<'a>(scores: impl Iterator<Item = &'a Score>) -> Gpa {
     let mut result = Gpa::default();
     let (mut point_sum, mut point_credits, mut percent_sum, mut percent_credits) = (0.0, 0.0, 0.0, 0.0);
@@ -566,7 +566,12 @@ pub(super) fn gpa<'a>(scores: impl Iterator<Item = &'a Score>) -> Gpa {
         let credit = score.credit.unwrap_or(0.0);
         result.courses += 1;
         result.credits += credit;
-        match score.point {
+        let point = match score.grade.as_str() {
+            "P" => None,
+            "F" => Some(0.0),
+            _ => score.point,
+        };
+        match point {
             Some(point) => {
                 point_sum += point * credit;
                 point_credits += credit;
@@ -575,7 +580,7 @@ pub(super) fn gpa<'a>(scores: impl Iterator<Item = &'a Score>) -> Gpa {
                     percent_credits += credit;
                 }
             }
-            None => result.pass_fail += 1,
+            None => result.without_points += 1,
         }
     }
     result.gpa = (point_credits > 0.0).then(|| point_sum / point_credits);
@@ -591,8 +596,8 @@ fn gpa_text(stats: &Gpa) -> String {
     if let Some(average) = stats.average {
         text.push_str(&format!(" · 加权均分 {average:.1}"));
     }
-    if stats.pass_fail > 0 {
-        text.push_str(&format!("（{} 门 P/F 等无绩点课程不计入绩点）", stats.pass_fail));
+    if stats.without_points > 0 {
+        text.push_str(&format!("（{} 门通过制或缺绩点课程未计入绩点）", stats.without_points));
     }
     text
 }
@@ -606,7 +611,7 @@ pub(super) fn render_scores(scores: &mut [Score], only: Option<TermCode>) -> Str
     }
     scores.sort_by(|a, b| b.term.cmp(&a.term).then(a.course.cmp(&b.course)));
     let title = only.map_or("全部学期".to_string(), |term| term.label());
-    let mut text = format!("成绩与绩点（教务系统，{title}）\n总计：{}\n", gpa_text(&gpa(scores.iter())));
+    let mut text = format!("课程成绩来自教务系统，GPA 和均分按下列课程在本地估算（{title}）\n总计：{}\n", gpa_text(&gpa(scores.iter())));
     let mut codes: Vec<&str> = scores.iter().map(|score| score.code.as_str()).filter(|code| !code.is_empty()).collect();
     codes.sort_unstable();
     let retakes = codes.windows(2).any(|pair| pair[0] == pair[1]);
@@ -640,11 +645,16 @@ pub(super) fn render_scores(scores: &mut [Score], only: Option<TermCode>) -> Str
     if retakes {
         text.push_str("；存在同一课程多条记录（补考/重修），这里逐条计入");
     }
-    text.push_str("。官方 GPA 以教务处成绩单为准。");
+    text.push_str("。需要学校公布的 GPA、学积分或排名时，可用 view=official 查看本人查询及证明办理入口。");
     text
 }
 
 pub(super) async fn score_report(arguments: Value) -> Result<String, String> {
+    match arguments["view"].as_str().unwrap_or("courses") {
+        "official" => return Ok(OFFICIAL_SCORE_GUIDE.into()),
+        "courses" => {}
+        _ => return Err("view 可选 courses（课程成绩）或 official（官方本人查询入口）".into()),
+    }
     let only = match arguments["term"].as_str().map(str::trim).filter(|text| !text.is_empty()) {
         Some(text) => Some(TermCode::parse(text)?),
         None => None,
@@ -659,6 +669,12 @@ pub(super) async fn score_report(arguments: Value) -> Result<String, String> {
     }
     Ok(clip(&text))
 }
+
+const OFFICIAL_SCORE_GUIDE: &str = "本科生官方 GPA、学积分与排名（本人查询入口）\n\
+    - 本人阶段性 GPA 和学积分可登录教学信息服务网，在「信息查询」选择「GPA/学积分查询」，查看已开放的学期。https://i.sjtu.edu.cn/\n\
+    - 本科电子成绩单可在数字交大「本科生」的「本科电子成绩单」办理，也可在交我办「本科生」办理。https://my.sjtu.edu.cn/\n\
+    - 学积分排名和 GPA 排名是两类证明，请按所属学院教务部门的说明申请。自动化与感知学院的办理说明见 https://sais.sjtu.edu.cn/bksrcpy/500.html\n\
+    - 浦江国际学院本科生查询本人 GPA 排名，可从本人交大邮箱向 ji-gpa@sjtu.edu.cn 提交姓名和学号。学院办事指南见 https://gc.sjtu.edu.cn/cn/academics/undergraduate-program/guides-recourses/services/";
 
 #[cfg(test)]
 mod tests {
@@ -741,7 +757,7 @@ mod tests {
     }
 
     #[test]
-    fn gpa_is_credit_weighted_and_skips_pass_fail_and_void_records() {
+    fn gpa_is_credit_weighted_and_skips_pass_and_void_records() {
         let mut scores = scores_from(&json!({"items": [
             {"kcmc": "大学物理", "kch": "PHY1", "xf": "4", "cj": "93", "jd": "4.00", "bfzcj": "93", "xnm": "2025", "xnmmc": "2025-2026", "xqm": "12", "ksxz": "正常考试"},
             {"kcmc": "高等数学", "kch": "MATH1", "xf": "6", "cj": "B+", "jd": "3.30", "bfzcj": "82", "xnm": "2025", "xnmmc": "2025-2026", "xqm": "3", "ksxz": "正常考试"},
@@ -749,16 +765,20 @@ mod tests {
             {"kcmc": "作废课", "kch": "X", "xf": "2", "cj": "60", "jd": "1.00", "xnm": "2025", "xqm": "3", "cjsfzf": "是"}
         ]}));
         let all = gpa(scores.iter());
-        assert_eq!((all.courses, all.pass_fail), (3, 1));
+        assert_eq!((all.courses, all.without_points), (3, 1));
         assert_eq!(all.credits, 11.0);
         assert!((all.gpa.unwrap() - 3.58).abs() < 1e-9, "{:?}", all.gpa);
         assert!((all.average.unwrap() - 86.4).abs() < 1e-9, "{:?}", all.average);
         let text = render_scores(&mut scores, None);
-        assert!(text.contains("总计：3 门 · 11 学分 · 加权绩点 3.58 · 加权均分 86.4（1 门 P/F 等无绩点课程不计入绩点）"), "{text}");
+        assert!(text.contains("总计：3 门 · 11 学分 · 加权绩点 3.58 · 加权均分 86.4（1 门通过制或缺绩点课程未计入绩点）"), "{text}");
         let spring = text.find("2025-2026 学年春季学期：1 门 · 4 学分 · 加权绩点 4.00").unwrap();
         let fall = text.find("2025-2026 学年秋季学期：").unwrap();
         assert!(spring < fall, "新学期在前：{text}");
         assert!(text.contains("- 高等数学 · 6 学分 · 成绩 B+ · 绩点 3.3"), "{text}");
         assert!(text.contains("- 作废课 · 2 学分 · 成绩 60 · 绩点 1 · 成绩已作废"), "{text}");
+        let pass_fail = scores_from(&json!({"items": [
+            {"xf": "2", "cj": "P", "jd": "4.00"}, {"xf": "1", "cj": "F", "jd": null}
+        ]}));
+        assert_eq!(gpa(pass_fail.iter()).gpa, Some(0.0));
     }
 }
