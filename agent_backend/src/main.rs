@@ -1,3 +1,4 @@
+mod doctor;
 mod llm;
 mod server;
 mod sessions;
@@ -50,6 +51,11 @@ async fn main() {
             }
         }
         return;
+    }
+
+    if std::env::args().any(|argument| argument == "--doctor") {
+        let healthy = doctor::run().await;
+        std::process::exit(if healthy { 0 } else { 1 });
     }
 
     if std::env::args().any(|argument| argument == "--sso-login") {
