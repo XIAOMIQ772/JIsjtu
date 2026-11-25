@@ -636,6 +636,22 @@ class Browser:
                              headers: {'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json, text/plain, */*'}};
             if (request.form) options.body = new URLSearchParams(request.form);
             try {
+                if (request.method === 'POST' && request.path === '/posts.json') {
+                    if (location.origin !== 'https://shuiyuan.sjtu.edu.cn') {
+                        return {status: 403, text: '', error: '未在水源站内，本次未发帖'};
+                    }
+                    options.redirect = 'error';
+                    options.mode = 'same-origin';
+                    const csrf = await fetch('/session/csrf.json', {
+                        credentials: 'same-origin', redirect: 'error', cache: 'no-store',
+                        headers: {'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest'}
+                    });
+                    const token = csrf.ok && (await csrf.json()).csrf;
+                    if (typeof token !== 'string' || !token) {
+                        return {status: 403, text: '', error: '无法获取水源发帖凭据，本次未发帖'};
+                    }
+                    options.headers['X-CSRF-Token'] = token;
+                }
                 const response = await fetch(request.path, options);
                 const text = await response.text();
                 return {status: response.status, redirected: response.redirected,
@@ -643,7 +659,7 @@ class Browser:
             } catch (error) {
                 return {status: 0, redirected: false, text: '', truncated: false, error: String(error).slice(0, 200)};
             }
-        })()""".replace("REQUEST", json.dumps(request)).replace("LIMIT", str(int(limit)))
+        })()""".replace("LIMIT", str(int(limit))).replace("REQUEST", json.dumps(request))
         return await self.evaluate(script)
 
     async def fetch_all(self, url, requests, limit=16000):
@@ -745,7 +761,7 @@ async def handle_request(request):
 
 def main():
     try:
-        request = json.loads(sys.stdin.read(65536))
+        request = json.loads(sys.stdin.read(131072))
         result = asyncio.run(asyncio.wait_for(handle_request(request), timeout=85))
     except SsoError as error:
         result = {"ok": False, "error": str(error)}

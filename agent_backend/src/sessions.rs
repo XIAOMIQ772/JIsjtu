@@ -184,6 +184,7 @@ impl Store {
             guard.record.title = prompt.chars().take(28).collect();
         }
         let mut messages = guard.record.messages.clone();
+        let session_id = guard.record.id.clone();
         guard.record.messages.push(
             ChatCompletionRequestUserMessageArgs::default()
                 .content(prompt.clone())
@@ -211,6 +212,7 @@ impl Store {
                     &prompt,
                     &async_openai::Client::new(),
                     &tx,
+                    &session_id,
                 )
                 .await;
                 (messages, result)

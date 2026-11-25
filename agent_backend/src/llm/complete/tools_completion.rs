@@ -22,6 +22,7 @@ mod homework;
 mod library_status;
 mod mail_fetch;
 mod office;
+pub(crate) mod outbound;
 mod open_usual_website;
 mod pdf_analysis;
 mod read;
@@ -70,6 +71,8 @@ pub async fn call(name: &str, arguments: serde_json::Value) -> Result<String, St
         "export_calendar"=>export_calendar::export_calendar(arguments).await,
         "degree_progress"=>degree_progress::degree_progress(arguments).await,
         "mail_fetch"=>mail_fetch::mail_fetch(arguments).await,
+        "send_email"=>outbound::send_email(arguments).await,
+        "shuiyuan_post"=>outbound::shuiyuan_post(arguments).await,
         "open_usual_website"=>open_usual_website::open_usual_website(arguments).await,
         "create_subagents"=>create_subagents::create_subagents(arguments).await,
         "homework"=>homework::homework(arguments).await,

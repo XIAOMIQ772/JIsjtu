@@ -59,11 +59,22 @@ pub async fn chat_once(
     prompt: &str,
     client: &async_openai::Client<async_openai::config::OpenAIConfig>,
     tx: &UnboundedSender<ChatEvent>,
+    session_id: &str,
 ) -> anyhow::Result<()> {
-    let model = std::env::var("MODEL")?;
-    chat_with_tools(messages, prompt, client, &model, Some(tx), true)
-        .await
-        .map(|_| ())
+    use tools_completion::outbound;
+    outbound::SESSION.scope(session_id.to_owned(), async {
+        if let Some(outcome) = outbound::consume_confirmation(prompt).await {
+            messages.push(ChatCompletionRequestUserMessageArgs::default().content(prompt).build()?.into());
+            let text = outcome.unwrap_or_else(|error| format!("发送未完成：{error}"));
+            messages.push(ChatCompletionRequestAssistantMessageArgs::default().content(text.clone()).build()?.into());
+            let _ = tx.send(ChatEvent::Answer { text });
+            return Ok(());
+        }
+        let model = std::env::var("MODEL")?;
+        chat_with_tools(messages, prompt, client, &model, Some(tx), true)
+            .await
+            .map(|_| ())
+    }).await
 }
 
 // Box the future to break the chat -> tool -> subagent -> chat type cycle.
@@ -89,7 +100,7 @@ async fn chat_with_tools(
     let mut tools = get_tools();
     if !allow_subagents {
         tools.retain(|tool| {
-            !matches!(tool, ChatCompletionTools::Function(tool) if tool.function.name == "create_subagents")
+            !matches!(tool, ChatCompletionTools::Function(tool) if matches!(tool.function.name.as_str(), "create_subagents" | "send_email" | "shuiyuan_post"))
         });
     }
 
@@ -232,6 +243,9 @@ async fn announce(tx: Option<&UnboundedSender<ChatEvent>>, call: &ChatCompletion
 async fn run_tool(name: &str, arguments: &str, allow_subagents: bool) -> anyhow::Result<String> {
     if name == "create_subagents" && !allow_subagents {
         return Err(anyhow::anyhow!("子 agent 不能再次调用 create_subagents"));
+    }
+    if !allow_subagents && matches!(name, "send_email" | "shuiyuan_post") {
+        return Err(anyhow::anyhow!("发邮件和水源发帖请交回主会话，由用户核对草稿"));
     }
     if name == "homework"
         && !allow_subagents

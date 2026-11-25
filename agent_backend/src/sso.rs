@@ -127,6 +127,7 @@ async fn run_helper(
         "OPENAI_API_KEY",
         "CANVAS_API_TOKEN",
         "IMAP_PASSWORD",
+        "SMTP_PASSWORD",
     ] {
         command.env_remove(key);
     }

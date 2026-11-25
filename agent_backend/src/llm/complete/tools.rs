@@ -648,6 +648,36 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
     }),
     ChatCompletionTools::Function(ChatCompletionTool {
         function: (FunctionObject {
+            name: "send_email".to_string(),
+            description: Some("起草一封从用户交大邮箱发送的纯文本邮件。工具向用户显示实际收件人、标题、正文以及确认命令。用户在同一会话输入确认命令后，服务端发送这份草稿。".into()),
+            parameters: Some(json!({
+                "type":"object","properties":{
+                    "to":{"type":"string","description":"单个收件人的完整邮箱地址"},
+                    "subject":{"type":"string","description":"邮件主题"},
+                    "body":{"type":"string","description":"邮件纯文本正文"}
+                },"required":["to","subject","body"],"additionalProperties":false
+            })),
+            strict: Some(true),
+        }),
+    }),
+    ChatCompletionTools::Function(ChatCompletionTool {
+        function: (FunctionObject {
+            name: "shuiyuan_post".to_string(),
+            description: Some("在交大水源社区查询发帖分类，或准备发表主题、回复帖子。topic 要给出 category_id、title 和 body，reply 要给出 topic_id 和 body。服务端展示草稿，待用户在同一会话输入确认命令后发布。".into()),
+            parameters: Some(json!({
+                "type":"object","properties":{
+                    "action":{"type":"string","enum":["categories","topic","reply"]},
+                    "category_id":{"type":["integer","null"],"description":"topic 的版块 ID，可用 categories 获取"},
+                    "topic_id":{"type":["integer","null"],"description":"reply 所回复的主题 ID"},
+                    "title":{"type":["string","null"],"description":"新主题标题"},
+                    "body":{"type":["string","null"],"description":"要发表的完整正文"}
+                },"required":["action","category_id","topic_id","title","body"],"additionalProperties":false
+            })),
+            strict: Some(true),
+        }),
+    }),
+    ChatCompletionTools::Function(ChatCompletionTool {
+        function: (FunctionObject {
             name: "mail_fetch".to_string(),
             description: Some(
                 "通过 IMAP 读取学校邮箱（只读，不改变已读状态）。list 列出某文件夹最新邮件；read 读某一封正文并列出带序号的附件；\

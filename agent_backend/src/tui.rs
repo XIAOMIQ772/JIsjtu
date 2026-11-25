@@ -1832,6 +1832,8 @@ fn tool_label(name: &str) -> Option<&'static str> {
         "library_status" => "查看图书馆人数",
         "open_usual_website" => "访问网页",
         "mail_fetch" => "读取校园邮件",
+        "send_email" => "准备发送邮件",
+        "shuiyuan_post" => "准备水源发帖",
         "create_subagents" => "分派子任务",
         _ => return None,
     })
