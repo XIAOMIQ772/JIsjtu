@@ -518,7 +518,9 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
         function: (FunctionObject {
             name: "watch_eduinfo".to_string(),
             description: Some(
-                "读取教学信息服务网的页面内容和链接，供后续课程查询使用。查课程时用 read，默认后台读取后自动关闭临时页面；仅用户明确要看网页时使用 show。".to_string(),
+                "打开或读取教学信息服务网（i.sjtu.edu.cn）首页。课表、考试安排、成绩与 GPA、学业完成情况请直接用 class_schedule、exam_schedule、\
+                 score_report、degree_progress，不要用本工具去页面里找；本工具只在需要浏览教务系统其他页面时使用。\
+                 read（默认）后台读取后自动关闭临时页面；仅用户明确要看网页时使用 show。".to_string(),
             ),
             parameters: Some(json!({
                 "type":"object",
