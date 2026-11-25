@@ -92,7 +92,7 @@ const COMMANDS: [CommandSpec; 7] = [
         command: SlashCommand::Resume,
         name: "resume",
         aliases: &["sessions"],
-        description: "恢复历史会话",
+        description: "恢复或删除历史会话",
     },
     CommandSpec {
         command: SlashCommand::Help,
@@ -152,6 +152,7 @@ fn parse_command(input: &str) -> Option<Result<SlashCommand, String>> {
 enum HttpRequest {
     List(u64),
     New,
+    Delete(String),
 }
 
 type HttpRequests = mpsc::UnboundedSender<HttpRequest>;
@@ -215,6 +216,8 @@ enum ServerMessage {
         session_id: Option<String>,
         text: String,
     },
+    #[serde(rename = "session_deleted")]
+    SessionDeleted { session_id: String },
 }
 
 #[derive(Debug)]
@@ -225,6 +228,7 @@ enum NetworkEvent {
         result: Result<Vec<SessionSummary>, String>,
     },
     SessionCreated(Result<SessionSummary, String>),
+    DeleteResult { id: String, result: Result<(), String> },
     InvalidMessage(String),
     Disconnected(String),
 }
@@ -236,6 +240,28 @@ struct SessionPicker {
     request_id: u64,
     loading: bool,
     error: Option<String>,
+    deletion: Option<Deletion>,
+}
+
+enum Deletion {
+    Confirm(SessionSummary),
+    Pending(String),
+}
+
+impl SessionPicker {
+    fn selected(&self) -> Option<&SessionSummary> {
+        self.selection.selected().and_then(|i| self.sessions.get(i))
+    }
+}
+
+impl SessionSummary {
+    fn display_title(&self) -> String {
+        if self.title.trim().is_empty() {
+            "新的对话".into()
+        } else {
+            display_text(&self.title).replace(['\n', '\r', '\t'], " ")
+        }
+    }
 }
 
 struct SessionView {
@@ -372,7 +398,7 @@ impl App {
         }
     }
 
-    fn apply(&mut self, message: ServerMessage) {
+    fn apply(&mut self, message: ServerMessage) -> Option<HttpRequest> {
         match message {
             ServerMessage::SessionSnapshot {
                 session,
@@ -381,16 +407,16 @@ impl App {
             } => {
                 let same_session = self.is_current_session(&session.id);
                 let switch_confirmed = self.pending_switch.as_deref() == Some(&session.id);
-                if self.session.is_some() && !same_session && !switch_confirmed {
-                    return;
+                if (self.ready || self.session.is_some()) && !same_session && !switch_confirmed {
+                    return None;
                 }
                 if same_session
                     && self.ready
                     && session.revision < self.session.as_ref().unwrap().revision
                 {
-                    return;
+                    return None;
                 }
-                if !same_session && self.session.is_some() {
+                if !same_session && (self.session.is_some() || switch_confirmed) {
                     self.restore_view(&session.id);
                 }
                 self.events.clear();
@@ -410,7 +436,7 @@ impl App {
             ServerMessage::SessionEvent { session, event } => {
                 // Revisions are local to a session. Late events must not enter another chat.
                 if !self.is_current_session(&session.id) {
-                    return;
+                    return None;
                 }
                 let current_revision = self
                     .session
@@ -418,7 +444,7 @@ impl App {
                     .map(|current| current.revision)
                     .unwrap_or_default();
                 if self.ready && session.revision <= current_revision {
-                    return;
+                    return None;
                 }
                 if matches!(event, ChatEvent::User { .. }) && self.sending {
                     self.input.clear();
@@ -447,7 +473,11 @@ impl App {
                     if let Some(picker) = &mut self.picker {
                         picker.error = Some(text.clone());
                     }
-                    self.status = text;
+                    self.status = if self.session.is_none() {
+                        format!("{text}。输入 /new 新建会话，或输入 /resume 打开其他会话")
+                    } else {
+                        text
+                    };
                 } else if session_id
                     .as_deref()
                     .is_none_or(|id| self.is_current_session(id))
@@ -456,7 +486,38 @@ impl App {
                     self.status = text;
                 }
             }
+            ServerMessage::SessionDeleted { session_id } => return self.remove_session(&session_id),
         }
+        None
+    }
+
+    fn remove_session(&mut self, id: &str) -> Option<HttpRequest> {
+        self.saved_views.remove(id);
+        if let Some(picker) = &mut self.picker
+            && let Some(index) = picker.sessions.iter().position(|s| s.id == id)
+        {
+            picker.sessions.remove(index);
+            let next = picker.sessions.len().checked_sub(1).map(|last| index.min(last));
+            picker.selection.select(next);
+            picker.deletion = None;
+            picker.error = None;
+        }
+        if !self.is_current_session(id) {
+            return None;
+        }
+        self.session = None;
+        self.picker = None;
+        self.events.clear();
+        self.clear_input();
+        self.scroll = 0;
+        self.follow_tail = true;
+        self.sending = false;
+        if self.connected && !self.creating && self.pending_switch.is_none() {
+            self.creating = true;
+            self.status = "会话已删除，正在新建会话".into();
+            return Some(HttpRequest::New);
+        }
+        None
     }
 
     fn is_current_session(&self, id: &str) -> bool {
@@ -620,6 +681,7 @@ impl App {
     fn can_send(&self) -> bool {
         self.connected
             && self.ready
+            && self.session.is_some()
             && self.picker.is_none()
             && self.pending_switch.is_none()
             && !self.creating
@@ -679,7 +741,11 @@ impl App {
         let summary = match result {
             Ok(summary) => summary,
             Err(error) => {
-                self.status = error;
+                self.status = if self.session.is_none() {
+                    format!("{error}。输入 /new 重试，或输入 /resume 打开其他会话")
+                } else {
+                    error
+                };
                 return;
             }
         };
@@ -750,6 +816,10 @@ pub async fn run(http_addr: SocketAddr) -> anyhow::Result<()> {
                         .await
                         .map_err(|error| format!("{error:#}")),
                 ),
+                HttpRequest::Delete(id) => NetworkEvent::DeleteResult {
+                    result: delete_session(&http, http_addr, &id).await.map_err(|error| format!("{error:#}")),
+                    id,
+                },
             };
             if list_network_tx.send(event).is_err() {
                 break;
@@ -863,6 +933,17 @@ async fn create_session(http: &reqwest::Client, addr: SocketAddr) -> anyhow::Res
         .context("新建会话响应格式错误")
 }
 
+async fn delete_session(http: &reqwest::Client, addr: SocketAddr, id: &str) -> anyhow::Result<()> {
+    let response = http.delete(format!("http://{addr}/api/sessions/{id}"))
+        .send().await.context("删除会话请求失败")?;
+    let status = response.status();
+    if status.is_success() || status == reqwest::StatusCode::NOT_FOUND {
+        return Ok(());
+    }
+    let detail = response.text().await.unwrap_or_default();
+    anyhow::bail!("删除失败（{status}）{}", display_text(detail.trim()))
+}
+
 // 终端输入在独立线程里阻塞读取，再经通道交给异步事件循环，
 // 这样按键、网络消息和动画计时可以同时等待，谁先到就先处理。
 fn spawn_input_reader(
@@ -892,14 +973,25 @@ fn handle_network(
     app: &mut App,
     event: NetworkEvent,
     outgoing: &mpsc::UnboundedSender<Message>,
+    requests: &HttpRequests,
 ) {
+    let mut followup = None;
     match event {
-        NetworkEvent::Message(message) => app.apply(message),
+        NetworkEvent::Message(message) => followup = app.apply(message),
         NetworkEvent::SessionList { request_id, result } => {
             app.receive_sessions(request_id, result);
         }
         NetworkEvent::SessionCreated(result) => {
             app.receive_new_session(result, outgoing);
+        }
+        NetworkEvent::DeleteResult { id, result: Ok(()) } => followup = app.remove_session(&id),
+        NetworkEvent::DeleteResult { id, result: Err(error) } => {
+            if let Some(picker) = &mut app.picker
+                && matches!(&picker.deletion, Some(Deletion::Pending(target)) if target == &id)
+            {
+                picker.deletion = None;
+                picker.error = Some(error);
+            }
         }
         NetworkEvent::InvalidMessage(error) => {
             app.status = format!("收到无法解析的消息：{error}");
@@ -912,10 +1004,15 @@ fn handle_network(
             app.pending_switch = None;
             if let Some(picker) = &mut app.picker {
                 picker.loading = false;
+                picker.deletion = None;
                 picker.error = Some(reason.clone());
             }
             app.status = reason;
         }
+    }
+    if let Some(request) = followup && requests.send(request).is_err() {
+        app.creating = false;
+        app.status = "会话连接已关闭".into();
     }
 }
 
@@ -952,9 +1049,9 @@ async fn event_loop(
 
         tokio::select! {
             Some(event) = network.recv() => {
-                handle_network(app, event, outgoing);
+                handle_network(app, event, outgoing, http_requests);
                 while let Ok(event) = network.try_recv() {
-                    handle_network(app, event, outgoing);
+                    handle_network(app, event, outgoing, http_requests);
                 }
             }
             Some(event) = input.recv() => {
@@ -1081,7 +1178,7 @@ fn run_command(
                 app.status = "连接尚未就绪，请稍后再试".into();
                 return Ok(());
             }
-            if app.events.is_empty() && !app.is_busy() {
+            if app.session.is_some() && app.events.is_empty() && !app.is_busy() {
                 app.clear_input();
                 app.status = "当前已经是新会话".into();
                 return Ok(());
@@ -1106,7 +1203,7 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
         _ => return,
     };
     if let Some(picker) = &mut app.picker {
-        if app.pending_switch.is_some() || picker.loading || picker.sessions.is_empty() {
+        if app.pending_switch.is_some() || picker.loading || picker.deletion.is_some() || picker.sessions.is_empty() {
             return;
         }
         let selected = picker.selection.selected().unwrap_or(0);
@@ -1132,14 +1229,42 @@ fn handle_picker_key(
     if app.pending_switch.is_some() {
         return;
     }
+    let picker = app.picker.as_mut().unwrap();
+    if let Some(deletion) = &picker.deletion {
+        if let Deletion::Confirm(target) = deletion {
+            match key.code {
+                KeyCode::Char('y' | 'Y') if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {
+                    let id = target.id.clone();
+                    if http_requests.send(HttpRequest::Delete(id.clone())).is_ok() {
+                        picker.deletion = Some(Deletion::Pending(id));
+                    } else {
+                        picker.deletion = None;
+                        picker.error = Some("会话连接已关闭".into());
+                    }
+                }
+                KeyCode::Esc | KeyCode::Char('n' | 'N') => picker.deletion = None,
+                _ => {}
+            }
+        }
+        return;
+    }
     match key.code {
         KeyCode::Esc => app.picker = None,
         KeyCode::Enter => switch_selected_session(app, outgoing),
-        KeyCode::Char('r') if app.connected && !app.picker.as_ref().unwrap().loading => {
+        KeyCode::Char('r') if app.connected && !picker.loading => {
             app.request_sessions(http_requests);
         }
+        KeyCode::Delete | KeyCode::Char('d') if app.connected && !picker.loading => {
+            if let Some(target) = picker.selected() {
+                if target.busy {
+                    picker.error = Some("会话正在回复，结束后按 r 刷新再删除".into());
+                } else {
+                    picker.deletion = Some(Deletion::Confirm(target.clone()));
+                    picker.error = None;
+                }
+            }
+        }
         _ => {
-            let picker = app.picker.as_mut().unwrap();
             if picker.loading || picker.sessions.is_empty() {
                 return;
             }
@@ -1164,12 +1289,7 @@ fn switch_selected_session(app: &mut App, outgoing: &mpsc::UnboundedSender<Messa
         .picker
         .as_ref()
         .filter(|picker| !picker.loading)
-        .and_then(|picker| {
-            picker
-                .selection
-                .selected()
-                .and_then(|index| picker.sessions.get(index))
-        })
+        .and_then(SessionPicker::selected)
         .map(|session| session.id.clone())
     else {
         return;
@@ -1439,8 +1559,14 @@ fn draw_session_picker(frame: &mut Frame, app: &mut App, area: Rect) {
     let current_id = app.session.as_ref().map(|session| session.id.as_str());
     let switching = app.pending_switch.is_some();
     let picker = app.picker.as_mut().unwrap();
+    let confirmation;
     let notice = if switching {
         "正在打开会话…"
+    } else if let Some(Deletion::Confirm(target)) = &picker.deletion {
+        confirmation = format!("永久删除「{}」？", target.display_title());
+        &confirmation
+    } else if picker.deletion.is_some() {
+        "正在删除会话…"
     } else if picker.loading {
         "正在读取会话…"
     } else if let Some(error) = &picker.error {
@@ -1448,12 +1574,21 @@ fn draw_session_picker(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         "选择一个会话，继续之前的对话。"
     };
-    let notice_height = visual_line_count(notice, area.width).clamp(1, 3) + 1;
+    let hint = if switching || matches!(picker.deletion, Some(Deletion::Pending(_))) {
+        ""
+    } else if picker.deletion.is_some() {
+        "y 确认删除  Esc 取消"
+    } else if area.width < 50 {
+        "↑↓  ↵ 打开  d 删除\nr 刷新  Esc 返回"
+    } else {
+        "↑↓ 选择   Enter 打开   d 删除   Esc 返回   r 刷新"
+    };
+    let notice_height = visual_line_count(notice, area.width).clamp(1, 4) + 1;
     let areas = Layout::vertical([
         Constraint::Length(2),
         Constraint::Length(notice_height),
         Constraint::Min(1),
-        Constraint::Length(1),
+        Constraint::Length(visual_line_count(hint, area.width).max(1)),
     ])
     .split(area);
     let heading = Layout::horizontal([Constraint::Min(0), Constraint::Length(10)]).split(Rect {
@@ -1477,7 +1612,7 @@ fn draw_session_picker(frame: &mut Frame, app: &mut App, area: Rect) {
     );
     frame.render_widget(
         Paragraph::new(notice)
-            .style(Style::default().fg(if picker.error.is_some() { ERROR } else { MUTED }))
+            .style(Style::default().fg(if picker.error.is_some() || picker.deletion.is_some() { ERROR } else { MUTED }))
             .wrap(Wrap { trim: false }),
         areas[1],
     );
@@ -1486,11 +1621,6 @@ fn draw_session_picker(frame: &mut Frame, app: &mut App, area: Rect) {
         .sessions
         .iter()
         .map(|session| {
-            let title = if session.title.trim().is_empty() {
-                "新的对话"
-            } else {
-                &session.title
-            };
             let mut detail = Vec::new();
             if Some(session.id.as_str()) == current_id {
                 detail.push("当前".to_string());
@@ -1510,7 +1640,7 @@ fn draw_session_picker(frame: &mut Frame, app: &mut App, area: Rect) {
                 );
             }
             ListItem::new(vec![
-                Line::raw(title.replace(['\n', '\r', '\t'], " ")),
+                Line::raw(session.display_title()),
                 Line::styled(detail.join(" · "), Style::default().fg(MUTED)),
                 Line::default(),
             ])
@@ -1530,19 +1660,8 @@ fn draw_session_picker(frame: &mut Frame, app: &mut App, area: Rect) {
             &mut picker.selection,
         );
     }
-    let hint = if switching {
-        "正在同步会话…"
-    } else if area.width < 30 && picker.error.is_some() {
-        "r 刷新  Esc 返回"
-    } else if area.width < 30 {
-        "↑↓  ↵ 打开  Esc 返回"
-    } else if area.width < 40 {
-        "↑↓ 选择  ↵ 打开  Esc 返回"
-    } else {
-        "↑↓ 选择   Enter 打开   Esc 返回   r 刷新"
-    };
     frame.render_widget(
-        Paragraph::new(hint).style(Style::default().fg(MUTED)),
+        Paragraph::new(hint).wrap(Wrap { trim: false }).style(Style::default().fg(MUTED)),
         areas[3],
     );
 }
@@ -2114,6 +2233,59 @@ mod tests {
         let (requests, mut received) = mpsc::unbounded_channel::<HttpRequest>();
         app.request_sessions(&requests);
         app.receive_sessions(list_id(received.try_recv().unwrap()), Ok(sessions));
+    }
+
+    #[test]
+    fn deleting_from_picker_requires_confirmation_and_replaces_the_current_session_once() {
+        let mut app = ready_app(1, false);
+        let other = SessionSummary { id: "other".into(), ..session(0, false) };
+        load_picker(&mut app, vec![session(1, false), other]);
+        let (outgoing, _messages) = mpsc::unbounded_channel();
+        let (requests, mut incoming) = mpsc::unbounded_channel();
+        let press = |app: &mut App, code| {
+            handle_key(app, KeyEvent::new(code, KeyModifiers::NONE), &outgoing, &requests).unwrap()
+        };
+        press(&mut app, KeyCode::End);
+        press(&mut app, KeyCode::Delete);
+        press(&mut app, KeyCode::Esc);
+        assert!(app.picker.is_some() && incoming.try_recv().is_err());
+        press(&mut app, KeyCode::Char('d'));
+        press(&mut app, KeyCode::Up);
+        press(&mut app, KeyCode::Enter);
+        assert!(incoming.try_recv().is_err());
+        press(&mut app, KeyCode::Char('y'));
+        assert!(matches!(incoming.try_recv(), Ok(HttpRequest::Delete(id)) if id == "other"));
+        handle_network(&mut app, NetworkEvent::DeleteResult { id: "other".into(), result: Ok(()) }, &outgoing, &requests);
+        assert_eq!(app.picker.as_ref().unwrap().sessions.len(), 1);
+        assert!(app.is_current_session("session-1"));
+
+        // HTTP can finish before the websocket deletion; a queued old snapshot must not revive the chat.
+        press(&mut app, KeyCode::Char('d'));
+        press(&mut app, KeyCode::Char('y'));
+        assert!(matches!(incoming.try_recv(), Ok(HttpRequest::Delete(id)) if id == "session-1"));
+        handle_network(&mut app, NetworkEvent::DeleteResult { id: "session-1".into(), result: Ok(()) }, &outgoing, &requests);
+        assert!(matches!(incoming.try_recv(), Ok(HttpRequest::New)));
+        app.apply(ServerMessage::SessionSnapshot {
+            session: session(2, false), events: vec![], save_error: None,
+        });
+        handle_network(&mut app, NetworkEvent::Message(ServerMessage::SessionDeleted {
+            session_id: "session-1".into(),
+        }), &outgoing, &requests);
+        assert!(app.session.is_none() && app.creating && incoming.try_recv().is_err());
+
+        // Deleting the original chat while a switch is in flight preserves the target's local draft.
+        let mut app = ready_app(1, false);
+        app.pending_switch = Some("other".into());
+        app.saved_views.insert("other".into(), SessionView {
+            input: "草稿".into(), cursor: 2, ..SessionView::default()
+        });
+        assert!(app.remove_session("session-1").is_none());
+        app.apply(ServerMessage::SessionSnapshot {
+            session: SessionSummary { id: "other".into(), ..session(3, false) },
+            events: vec![], save_error: None,
+        });
+        assert!(app.is_current_session("other") && app.can_send());
+        assert_eq!(app.input, "草稿");
     }
 
     #[test]

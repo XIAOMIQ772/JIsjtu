@@ -141,11 +141,13 @@ python3 -m unittest discover -s agent_backend/scripts -p test_sso.py -v
 
 左侧「我的对话」显示已保存的会话，点击即可切换，不需要刷新页面。「开启new session」会建立独立上下文，原会话仍保留。每个会话的输入草稿、滚动位置和工具进度独立；切走后任务继续执行，列表显示处理状态，切回时同步完整记录。草稿和滚动位置在当前页面内保留，聊天记录与模型上下文保存到磁盘，刷新或服务重启后仍可继续。
 
-TUI 模式（默认 `cargo run --locked`，也可显式指定 `--tui`）下，输入 `/sessions` 并按 Enter，进入独立的会话选择界面。用 `↑/↓` 选择，Enter 打开会话并返回聊天，Esc 取消返回，`r` 刷新列表。列表按最近更新时间排序，并标出当前会话和正在处理的会话；模型回复中也可以切换，切回后同步最新内容。每个会话的草稿和滚动位置在本次 TUI 运行期间独立保留，`/sessions` 不会发给模型或写入聊天历史。
+在 TUI 输入 `/resume`（或 `/sessions`）打开历史会话。用 ↑ / ↓ 选中一条，Enter 打开，`r` 刷新，Esc 返回聊天。按 `d` 或 Delete 会显示待删除会话的标题，按 `y` 永久删除，按 `n` 或 Esc 取消。正在生成回复的会话需等回复结束后再删。删除当前会话会进入新的空白对话。
+
+列表按最近更新时间排序，并标出当前会话和正在处理的会话。模型回复中也可以切换，切回后同步最新内容。每个会话的草稿和滚动位置在本次 TUI 运行期间独立保留。
 
 会话由服务端管理，不依赖模型调用文件工具保存。`sessions/<稳定ID>.json` 保存完整模型消息（含工具调用及结果）、页面事件、创建时间和标题；标题取首次提问的前 28 个字符。`sessions/config.json` 是旧的格式示例，不作为聊天记录读取。可通过 `AGENT_SESSIONS_DIR` 指定存储位置，默认使用当前目录或上一级已有的 `sessions/`。
 
-接口：`GET /api/sessions` 列表，`POST /api/sessions` 新建，`GET /api/sessions/{id}` 历史；WebSocket `/ws?session_id=<id>` 恢复会话，发送 `{"type":"switch_session","session_id":"<id>"}` 热切换。服务端返回 `session_snapshot` 或带会话 ID、递增 revision 的 `session_event`，前端确认切换后才允许发送新消息。
+HTTP 接口支持列出会话（`GET /api/sessions`）、新建会话（`POST /api/sessions`）、读取或删除指定会话（`GET` 或 `DELETE /api/sessions/{id}`）。WebSocket `/ws?session_id=<id>` 恢复会话，发送 `{"type":"switch_session","session_id":"<id>"}` 可以切换。服务端通过 `session_snapshot` 和 `session_event` 同步会话内容，在当前打开的会话被删除时发送 `session_deleted`。
 
 本次接口需要配套新版后端。前端测试使用本地模拟模型，不消耗真实 API 额度：安装 Playwright 后运行 `node agent_frontend/tests/sessions.cjs`；`PLAYWRIGHT_MODULE` 可指定已有 Playwright 模块路径，`AGENT_TEST_BINARY` 可指定已构建后端路径。
 

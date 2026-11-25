@@ -46,7 +46,7 @@ AGENT_SSO_PYTHON=./.venv/bin/python
 ## 使用
 
 ```sh
-JIsjtu              # 默认启动终端界面，输入 /sessions 切换会话
+JIsjtu              # 默认启动终端界面，输入 /resume 打开历史会话
 JIsjtu --web        # 启动网页界面，默认地址 http://127.0.0.1:13376
 JIsjtu web          # 与 --web 相同
 JIsjtu --tui        # 显式启动终端界面
@@ -56,6 +56,8 @@ JIsjtu --help       # 查看帮助
 ```
 
 运行时保持终端打开，按 Ctrl+C 停止服务。修改 `.env` 后重启生效。技能可以放入安装目录的 `skills/<名字>/SKILL.md`，新增后重启加载。
+
+在 `/resume` 的列表中用 ↑ / ↓ 选中会话，按 `d` 或 Delete，核对标题后按 `y` 永久删除。`n` 或 Esc 取消。
 
 HTTP 和 TCP 默认只监听 `127.0.0.1`。仅在受控网络中需要共享时设置 `AGENT_BIND_ADDR` 为指定网卡的 IP。`0.0.0.0` 会在所有 IPv4 网卡开放两个未认证的服务端口。
 
