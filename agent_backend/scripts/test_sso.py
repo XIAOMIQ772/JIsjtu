@@ -296,7 +296,7 @@ class SsoBrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.browser.cdp.call("Target.getBrowserContexts"))["browserContextIds"], [])
 
         ready = asyncio.Event()
-        async def waiting_content():
+        async def waiting_content(*_):
             ready.set()
             await asyncio.Future()
 
@@ -446,7 +446,7 @@ class SsoBrowserTests(unittest.IsolatedAsyncioTestCase):
     async def test_cancelled_helper_stops_its_background_process(self):
         ready = asyncio.Event()
 
-        async def waiting_content():
+        async def waiting_content(*_):
             ready.set()
             await asyncio.Future()
 
