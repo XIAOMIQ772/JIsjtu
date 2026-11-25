@@ -1,6 +1,6 @@
 //! 文本处理共用函数：HTML 转纯文本、截断、压成一行。
 
-fn decode_entity(entity: &str) -> Option<String> {
+pub(super) fn decode_entity(entity: &str) -> Option<String> {
     let named = match entity {
         "nbsp" => " ",
         "amp" => "&",

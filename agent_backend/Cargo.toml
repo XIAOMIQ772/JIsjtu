@@ -24,6 +24,7 @@ imap = "2.4"
 native-tls = "0.2"
 mail-parser = { version = "0.11", features = ["encoding_rs", "full_encoding"] }
 chrono = "0.4"
+flate2 = "1"
 ratatui = "0.30.2"
 crossterm = "0.29.0"
 futures-util = "0.3.34"

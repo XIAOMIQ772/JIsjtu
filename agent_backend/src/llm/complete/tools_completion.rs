@@ -20,6 +20,7 @@ mod get_time_stamp;
 mod homework;
 mod library_status;
 mod mail_fetch;
+mod office;
 mod open_usual_website;
 mod pdf_analysis;
 mod read;
@@ -55,6 +56,7 @@ pub async fn call(name: &str, arguments: serde_json::Value) -> Result<String, St
         "shuiyuan_search"=>shuiyuan_search::shuiyuan_search(arguments).await,
         "shuiyuan_topic"=>shuiyuan_search::shuiyuan_topic(arguments).await,
         "pdf_analysis"=>pdf_analysis::pdf_analysis(arguments).await,
+        "read_office"=>office::read_office(arguments).await,
         "course_files"=>course_files::course_files(arguments).await,
         "watch_eduinfo"=>watch_eduinfo::watch_eduinfo(arguments).await,
         "class_schedule"=>eduinfo::class_schedule(arguments).await,

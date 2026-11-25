@@ -383,6 +383,27 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
     }),
     ChatCompletionTools::Function(ChatCompletionTool {
         function: (FunctionObject {
+            name: "read_office".to_string(),
+            description: Some(
+                "读取 PowerPoint（.pptx，含讲者备注）、Word（.docx，含表格）、Excel（.xlsx，按工作表逐行）文件里的文字，\
+                 常用于课件、实验指导书、作业模板、成绩表。幻灯片很多时先返回每页第一行作为目录，再用 start/end 指定页码读取；\
+                 Excel 的 start/end 指工作表序号。PDF 用 pdf_analysis；旧版 .ppt/.doc/.xls 需先另存为新格式。".to_string(),
+            ),
+            parameters: Some(json!({
+                "type":"object",
+                "properties":{
+                    "path":{"type":"string","description":"文件的绝对路径"},
+                    "start":{"type":["integer","null"],"description":"pptx 起始页或 xlsx 起始工作表，从 1 开始"},
+                    "end":{"type":["integer","null"],"description":"pptx 结束页或 xlsx 结束工作表（含）"}
+                },
+                "required":["path","start","end"],
+                "additionalProperties":false
+            })),
+            strict: Some(true),
+        }),
+    }),
+    ChatCompletionTools::Function(ChatCompletionTool {
+        function: (FunctionObject {
             name: "course_files".to_string(),
             description: Some(
                 "查看某门课程在 Canvas 上的文件（讲义、课件、作业附件等）。\
@@ -398,7 +419,7 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
                     "action":{
                         "type":"string",
                         "enum":["list","download","open"],
-                        "description":"list=列出文件；download=下载供后台分析；open=下载并展示给用户，仅在用户明确要查看文件时使用。为查询或分析资料应下载后调用读取工具。"
+                        "description":"list=列出文件；download=下载供后台分析；open=下载并展示给用户，仅在用户明确要查看文件时使用。为查询或分析资料应下载后用 pdf_analysis（PDF）或 read_office（pptx/docx/xlsx）读取。"
                     },
                     "file":{
                         "type":"string",

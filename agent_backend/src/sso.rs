@@ -64,8 +64,6 @@ pub struct FetchResponse {
     #[serde(default)]
     pub truncated: bool,
     #[serde(default)]
-    pub redirected: bool,
-    #[serde(default)]
     pub error: Option<String>,
 }
 
@@ -201,20 +199,6 @@ pub fn is_campus_url(url: &str) -> bool {
 
 pub async fn visit_site(url: &str, show: bool) -> Result<String, String> {
     visit_site_with_limit(url, show, 16000).await
-}
-
-/// 在后台读取页面纯文本（用于 JSON 接口等需要完整内容的场景），不保留页面。
-pub async fn read_page_text(url: &str, limit: usize) -> Result<String, String> {
-    let output = visit_site_with_limit(url, false, limit).await?;
-    let value: Value = serde_json::from_str(&output).map_err(|error| error.to_string())?;
-    let page = &value["page"];
-    if page["truncated"].as_bool() == Some(true) {
-        return Err("页面内容过长，已被截断".into());
-    }
-    page["text"]
-        .as_str()
-        .map(str::to_string)
-        .ok_or_else(|| "浏览器未返回网页文本".into())
 }
 
 /// 打开校园站点的入口页（浏览器自动走完 jAccount 单点登录跳转），再在该页面内依次发起站内请求，

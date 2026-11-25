@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, Duration, NaiveDate, NaiveTime, TimeZone, Utc};
 use serde_json::Value;
 
 use super::campus_time::{self, PERIODS, date_of, week_of};

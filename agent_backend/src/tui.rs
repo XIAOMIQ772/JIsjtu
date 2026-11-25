@@ -1787,6 +1787,7 @@ fn tool_label(name: &str) -> Option<&'static str> {
         "get_time_stamp" => "获取当前时间",
         "daily_brief" => "整理今日简报",
         "pdf_analysis" => "阅读 PDF",
+        "read_office" => "阅读 Office 文档",
         "course_files" => "查找课程资料",
         "homework" => "处理作业",
         "watch_eduinfo" => "访问教学信息网",

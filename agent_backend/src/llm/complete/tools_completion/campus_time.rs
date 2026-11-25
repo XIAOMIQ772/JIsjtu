@@ -93,6 +93,7 @@ pub(super) struct Term {
 }
 
 impl Term {
+    #[cfg(test)]
     pub fn end(&self) -> NaiveDate {
         self.start + chrono::Duration::days(self.weeks as i64 * 7 - 1)
     }
