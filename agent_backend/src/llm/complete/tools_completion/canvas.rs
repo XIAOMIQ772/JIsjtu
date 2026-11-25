@@ -177,6 +177,8 @@ pub(super) struct Submission {
     pub excused: Option<bool>,
     #[serde(default)]
     pub attempt: Option<u64>,
+    #[serde(default)]
+    pub graded_at: Option<String>,
 }
 
 impl Submission {

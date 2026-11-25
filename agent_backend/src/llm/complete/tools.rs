@@ -196,6 +196,25 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
     }),
     ChatCompletionTools::Function(ChatCompletionTool {
         function: (FunctionObject {
+            name: "get_grades".to_string(),
+            description: Some(
+                "查询 Canvas 上的作业成绩与老师反馈。不传 course_id：各课程当前总评（老师公开时）和最近 30 天新批改的作业；\
+                 传 course_id：该课逐项得分、班级均分/最高/最低、分组权重与得分率、老师和助教的评语。\
+                 这是 Canvas 平时成绩；期末总评和绩点以教务系统为准。".to_string(),
+            ),
+            parameters: Some(json!({
+                "type":"object",
+                "properties":{
+                    "course_id":{"type":["string","null"],"description":"课程 id；null 表示看所有课程的概览"}
+                },
+                "required":["course_id"],
+                "additionalProperties":false
+            })),
+            strict: Some(true),
+        }),
+    }),
+    ChatCompletionTools::Function(ChatCompletionTool {
+        function: (FunctionObject {
             name: "watch_shuiyuan".to_string(),
             description: Some(
                 "打开水源社区，复用 jAccount 登录状态。默认 show：打开可见网页并保留给用户。只有用户让助手查询、阅读、提取或总结网页内容时，才明确传 read，在后台读取后自动关闭临时页面。".to_string(),

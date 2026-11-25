@@ -10,6 +10,7 @@ mod get_announcements;
 mod get_courses;
 mod get_deadlines;
 mod get_exam;
+mod get_grades;
 mod get_hotnews;
 mod get_time_stamp;
 mod homework;
@@ -38,6 +39,7 @@ pub async fn call(name: &str, arguments: serde_json::Value) -> Result<String, St
         "get_exam"=>get_exam::get_exam(arguments).await,
         "get_deadlines"=>get_deadlines::get_deadlines(arguments).await,
         "get_announcements"=>get_announcements::get_announcements(arguments).await,
+        "get_grades"=>get_grades::get_grades(arguments).await,
         "get_hotnews"=>get_hotnews::get_hotnews(arguments).await,
         "watch_shuiyuan"=>watch_shuiyuan::watch_shuiyuan(arguments).await,
         "pdf_analysis"=>pdf_analysis::pdf_analysis(arguments).await,
