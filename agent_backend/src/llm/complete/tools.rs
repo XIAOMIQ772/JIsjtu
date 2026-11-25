@@ -481,6 +481,65 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
         }),
     }),
     ChatCompletionTools::Function(ChatCompletionTool {
+        function: (FunctionObject {
+            name: "class_schedule".to_string(),
+            description: Some(
+                "从教学信息服务网（教务系统）读取本人课表，按交大校历的教学周和单双周过滤，给出节次对应时间、教室和老师。\
+                 day：today（默认）、tomorrow、this_week、next_week、all（整学期课表）或 YYYY-MM-DD；week 可直接指定第几教学周。\
+                 term 查其他学期，格式 2025-2026-2（1 秋季、2 春季、3 夏季），非当前学期时给整学期课表。\
+                 用户问“今天/明天有什么课”“下节课在哪”“这周课表”时使用。".to_string(),
+            ),
+            parameters: Some(json!({
+                "type":"object",
+                "properties":{
+                    "day":{"type":["string","null"],"description":"today、tomorrow、this_week、next_week、all 或 YYYY-MM-DD；null 表示今天"},
+                    "week":{"type":["integer","null"],"description":"指定教学周（1–18），给出时返回该周课表"},
+                    "term":{"type":["string","null"],"description":"学期，如 2025-2026-2；null 表示当前学期"}
+                },
+                "required":["day","week","term"],
+                "additionalProperties":false
+            })),
+            strict: Some(true),
+        }),
+    }),
+    ChatCompletionTools::Function(ChatCompletionTool {
+        function: (FunctionObject {
+            name: "exam_schedule".to_string(),
+            description: Some(
+                "从教务系统读取本人考试安排（期中、期末等）：日期、星期、起止时间、倒计时、考场与校区，按时间排序，\
+                 未公布的考试会标注。用户问“什么时候考试”“考场在哪”“还有几天考试”时使用。".to_string(),
+            ),
+            parameters: Some(json!({
+                "type":"object",
+                "properties":{
+                    "term":{"type":["string","null"],"description":"学期，如 2026-2027-1；null 表示当前学期"}
+                },
+                "required":["term"],
+                "additionalProperties":false
+            })),
+            strict: Some(true),
+        }),
+    }),
+    ChatCompletionTools::Function(ChatCompletionTool {
+        function: (FunctionObject {
+            name: "score_report".to_string(),
+            description: Some(
+                "从教务系统读取本人各学期课程成绩与绩点，按学分加权计算总 GPA、各学期 GPA 和加权均分（P/F 课程不计入绩点），\
+                 并列出每门课的学分、成绩、绩点、考试性质。用户问“我的 GPA”“这学期成绩出了吗”“哪门课分低”时使用。\
+                 Canvas 上的平时作业分数用 get_grades。".to_string(),
+            ),
+            parameters: Some(json!({
+                "type":"object",
+                "properties":{
+                    "term":{"type":["string","null"],"description":"只看某学期，如 2025-2026-2；null 表示全部学期"}
+                },
+                "required":["term"],
+                "additionalProperties":false
+            })),
+            strict: Some(true),
+        }),
+    }),
+    ChatCompletionTools::Function(ChatCompletionTool {
         function: FunctionObject {
             name: "open_usual_website".to_string(),
             description: Some(
