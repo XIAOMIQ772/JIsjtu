@@ -32,13 +32,26 @@ fn parse_jsonp(body: &str) -> Result<Counts, String> {
     serde_json::from_str(body[start..end].trim()).map_err(|err| format!("图书馆人数数据格式变化，解析失败: {err}"))
 }
 
-fn render(counts: &Counts) -> String {
-    let now = campus_time::now();
-    let updated = counts
+fn render(counts: &Counts, now: chrono::DateTime<chrono::FixedOffset>) -> String {
+    let updated_at = counts
         .timestamp
-        .and_then(|millis| campus_time::beijing().timestamp_millis_opt(millis).single())
-        .map(|time| format!("（{} 更新）", fmt_time(time, now)))
+        .and_then(|millis| campus_time::beijing().timestamp_millis_opt(millis).single());
+    let mut updated = updated_at
+        .map(|time| format!("（{} 更新", fmt_time(time, now)))
         .unwrap_or_default();
+    if let Some(minutes) = updated_at.map(|time| (now - time).num_minutes()).filter(|minutes| *minutes >= 30) {
+        updated.push_str(&format!("，已是 {minutes} 分钟前的数据"));
+    }
+    if !updated.is_empty() {
+        updated.push('）');
+    }
+    // 闭馆时段接口仍会返回各馆，但人数和容量都是 0
+    if counts.numbers.iter().all(|area| area.max <= 0 && area.in_counter <= 0) {
+        return format!(
+            "交大图书馆人数统计{updated}：目前各馆都没有数据（人数和容量均为 0），通常是闭馆时段，开馆后会恢复。\n\
+             开放时间以图书馆官网（www.lib.sjtu.edu.cn）为准。"
+        );
+    }
     let mut text = format!("交大图书馆实时在馆人数{updated}\n");
     let mut quietest: Option<(&Area, f64)> = None;
     for area in &counts.numbers {
@@ -78,7 +91,7 @@ pub(super) async fn library_status(_: serde_json::Value) -> Result<String, Strin
     if counts.numbers.is_empty() {
         return Err("图书馆人数接口没有返回任何场馆".into());
     }
-    Ok(render(&counts))
+    Ok(render(&counts, campus_time::now()))
 }
 
 #[cfg(test)]
@@ -90,10 +103,23 @@ mod tests {
         let body = r#"CountPerson({"timestamp":1795618867743,"numbers":[{"areaName":"图书馆主馆","inCounter":680,"max":5000},{"areaName":"李政道图书馆","inCounter":470,"max":1000},{"areaName":"包玉刚图书馆","inCounter":131,"max":4000}]});"#;
         let counts = parse_jsonp(body).unwrap();
         assert_eq!(counts.numbers.len(), 3);
-        let text = render(&counts);
+        let now = campus_time::beijing().timestamp_millis_opt(1795618867743 + 5 * 60_000).single().unwrap();
+        let text = render(&counts, now);
         assert!(text.contains("- 图书馆主馆：680 人 / 容量 5000（14%）"), "{text}");
+        assert!(!text.contains("分钟前"), "5 分钟内的数据不提示：{text}");
         assert!(text.contains("- 李政道图书馆：470 人 / 容量 1000（47%）"), "{text}");
         assert!(text.contains("现在最空的是包玉刚图书馆"), "{text}");
         assert!(parse_jsonp("<html>维护中</html>").is_err());
+    }
+
+    #[test]
+    fn closed_hours_and_stale_data_are_explained() {
+        let body = r#"CountPerson({"timestamp":1795618867743,"numbers":[{"areaName":"图书馆主馆","inCounter":0,"max":0},{"areaName":"李政道图书馆","inCounter":0,"max":0}]});"#;
+        let counts = parse_jsonp(body).unwrap();
+        let later = campus_time::beijing().timestamp_millis_opt(1795618867743 + 46 * 60_000).single().unwrap();
+        let text = render(&counts, later);
+        assert!(text.contains("目前各馆都没有数据"), "{text}");
+        assert!(text.contains("已是 46 分钟前的数据"), "{text}");
+        assert!(!text.contains("最空"), "{text}");
     }
 }
