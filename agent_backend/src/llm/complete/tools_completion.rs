@@ -6,6 +6,7 @@ mod canvas;
 mod course_files;
 mod create_subagents;
 mod daily_brief;
+mod degree_progress;
 mod edit;
 mod eduinfo;
 mod export_calendar;
@@ -63,6 +64,7 @@ pub async fn call(name: &str, arguments: serde_json::Value) -> Result<String, St
         "exam_schedule"=>eduinfo::exam_schedule(arguments).await,
         "score_report"=>eduinfo::score_report(arguments).await,
         "export_calendar"=>export_calendar::export_calendar(arguments).await,
+        "degree_progress"=>degree_progress::degree_progress(arguments).await,
         "mail_fetch"=>mail_fetch::mail_fetch(arguments).await,
         "open_usual_website"=>open_usual_website::open_usual_website(arguments).await,
         "create_subagents"=>create_subagents::create_subagents(arguments).await,

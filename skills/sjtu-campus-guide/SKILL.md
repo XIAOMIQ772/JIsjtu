@@ -32,6 +32,7 @@ description: 交大校园常识速查：常用系统入口与用途、校历与�
 - 课表、下节课在哪：class_schedule（day=today/tomorrow/this_week/next_week/all）
 - 考试时间与考场：exam_schedule
 - 期末成绩、GPA：score_report（教务系统，官方口径）
+- 离毕业还差多少学分、哪类课还没修够：degree_progress
 - 平时作业分数、老师评语：get_grades（Canvas）
 - 作业截止：跨课程用 get_deadlines，单门课细节用 get_exam
 - 课程公告：get_announcements

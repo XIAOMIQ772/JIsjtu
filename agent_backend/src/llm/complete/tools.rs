@@ -574,6 +574,17 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
     }),
     ChatCompletionTools::Function(ChatCompletionTool {
         function: (FunctionObject {
+            name: "degree_progress".to_string(),
+            description: Some(
+                "读取教务系统的学业完成情况（培养方案各类要求的要求学分、已获得学分、还差多少及备注），\
+                 用户问“离毕业还差多少学分”“通识课修够了吗”“还需要选哪类课”时使用。获得学分只计已出成绩的课程。".to_string(),
+            ),
+            parameters: Some(json!({"type":"object","properties":{},"required":[],"additionalProperties":false})),
+            strict: Some(true),
+        }),
+    }),
+    ChatCompletionTools::Function(ChatCompletionTool {
+        function: (FunctionObject {
             name: "export_calendar".to_string(),
             description: Some(
                 "把本学期课表（按教学周与单双周展开成具体日期，节假日不生成）、已公布的考试和未来 60 天未完成的 Canvas 作业截止\

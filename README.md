@@ -67,6 +67,7 @@ JIsjtu
 | 课表、下节课在哪 | `class_schedule`：今天/明天/本周/下周/整学期，按教学周与单双周过滤 | 教学信息服务网 |
 | 考试时间与考场 | `exam_schedule`：倒计时、考场、未公布标注 | 教学信息服务网 |
 | 成绩与 GPA | `score_report`：按学分加权的总 GPA、学期 GPA、加权均分（P/F 不计入） | 教学信息服务网 |
+| 离毕业还差什么 | `degree_progress`：培养方案各类要求的要求/已获得学分与缺口 | 教学信息服务网 |
 | 作业截止 | `get_deadlines`（跨课程）、`get_exam`（单门课，含提交状态） | Canvas |
 | 课程公告 | `get_announcements` | Canvas |
 | 平时成绩与评语 | `get_grades`：逐项得分、班级均分/最高/最低、权重、老师评语 | Canvas |

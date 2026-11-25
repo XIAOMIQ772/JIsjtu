@@ -1825,6 +1825,7 @@ fn tool_label(name: &str) -> Option<&'static str> {
         "exam_schedule" => "查询考试安排",
         "score_report" => "查询成绩与绩点",
         "export_calendar" => "导出日历",
+        "degree_progress" => "查询学业完成情况",
         "find_classroom" => "寻找空教室",
         "library_status" => "查看图书馆人数",
         "open_usual_website" => "访问网页",
