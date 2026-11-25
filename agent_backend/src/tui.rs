@@ -22,6 +22,7 @@ use serde_json::json;
 use std::{
     collections::HashMap,
     io,
+    net::SocketAddr,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -708,12 +709,12 @@ impl App {
     }
 }
 
-pub async fn run(http_port: u16) -> anyhow::Result<()> {
+pub async fn run(http_addr: SocketAddr) -> anyhow::Result<()> {
     let http = reqwest::Client::builder()
         .no_proxy()
         .timeout(Duration::from_secs(10))
         .build()?;
-    let url = format!("ws://127.0.0.1:{http_port}/ws");
+    let url = format!("ws://{http_addr}/ws");
     let socket = {
         let mut attempts = 0;
         loop {
@@ -740,12 +741,12 @@ pub async fn run(http_port: u16) -> anyhow::Result<()> {
             let event = match request {
                 HttpRequest::List(request_id) => NetworkEvent::SessionList {
                     request_id,
-                    result: fetch_sessions(&http, http_port)
+                    result: fetch_sessions(&http, http_addr)
                         .await
                         .map_err(|error| format!("{error:#}")),
                 },
                 HttpRequest::New => NetworkEvent::SessionCreated(
-                    create_session(&http, http_port)
+                    create_session(&http, http_addr)
                         .await
                         .map_err(|error| format!("{error:#}")),
                 ),
@@ -838,8 +839,8 @@ pub async fn run(http_port: u16) -> anyhow::Result<()> {
     result
 }
 
-async fn fetch_sessions(http: &reqwest::Client, port: u16) -> anyhow::Result<Vec<SessionSummary>> {
-    http.get(format!("http://127.0.0.1:{port}/api/sessions"))
+async fn fetch_sessions(http: &reqwest::Client, addr: SocketAddr) -> anyhow::Result<Vec<SessionSummary>> {
+    http.get(format!("http://{addr}/api/sessions"))
         .send()
         .await
         .context("无法读取会话列表")?
@@ -850,8 +851,8 @@ async fn fetch_sessions(http: &reqwest::Client, port: u16) -> anyhow::Result<Vec
         .context("会话列表格式错误")
 }
 
-async fn create_session(http: &reqwest::Client, port: u16) -> anyhow::Result<SessionSummary> {
-    http.post(format!("http://127.0.0.1:{port}/api/sessions"))
+async fn create_session(http: &reqwest::Client, addr: SocketAddr) -> anyhow::Result<SessionSummary> {
+    http.post(format!("http://{addr}/api/sessions"))
         .send()
         .await
         .context("无法新建会话")?

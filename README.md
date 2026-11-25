@@ -51,6 +51,7 @@ JIsjtu
 | `EMAIL_USER_ACCOUNT` / `EMAIL_USER_PASSWORD` | jAccount 账号或交大邮箱地址，以及 jAccount 登录密码 |
 | `IMAP_PASSWORD` | 可选，独立的邮箱密码或客户端授权码；留空时沿用 `EMAIL_USER_PASSWORD` |
 | `IMAP_HOST` / `IMAP_PORT` | 邮箱服务器；学校邮箱可设置 `imap.sjtu.edu.cn`、`993` |
+| `AGENT_BIND_ADDR` | HTTP 和 TCP 共用的监听 IP，默认 `127.0.0.1`。需要局域网访问时可指定本机的局域网 IP |
 | `AGENT_HTTP_PORT` / `AGENT_TCP_PORT` | HTTP 与 TCP 端口，默认 `13376` / `8081` |
 | `AGENT_NO_BROWSER` | 设置此变量可跳过自动打开浏览器 |
 | `AGENT_FRONTEND_DIR` | 可选，指定前端静态文件目录 |
@@ -228,7 +229,7 @@ python3 scripts/test-package.py --archive ../JIsjtu.zip --smoke
 
 ## 使用边界
 
-这是个人本地助手，工具可以执行命令、读写本机文件。当前服务监听所有网卡，尚无用户认证，不应将 HTTP / TCP 端口开放到公网。模型调用及校园功能依赖对应服务可用性。macOS 分发程序未经 Developer ID 签名或公证。
+这是个人本地助手，HTTP 与 TCP 默认只监听 `127.0.0.1`。设置 `AGENT_BIND_ADDR=0.0.0.0` 会同时向所有 IPv4 网卡开放两个端口。接口没有用户认证，能连入的人可以调用本机工具并使用已登录的校园服务，请仅在受控网络中按需启用。macOS 分发程序未经 Developer ID 签名或公证。
 
 ## 许可证
 

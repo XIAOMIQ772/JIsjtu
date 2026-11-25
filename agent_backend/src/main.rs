@@ -6,6 +6,7 @@ mod skills;
 mod sso;
 mod tui;
 
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::PathBuf;
 
 use server::{router, serve_tcp};
@@ -74,6 +75,13 @@ async fn main() {
         .any(|argument| matches!(argument.as_str(), "--web" | "web"));
     let http_port = env_port("AGENT_HTTP_PORT", 13376);
     let tcp_port = env_port("AGENT_TCP_PORT", 8081);
+    let bind_ip: IpAddr = match std::env::var_os("AGENT_BIND_ADDR") {
+        None => Ipv4Addr::LOCALHOST.into(),
+        Some(value) => value.to_str().and_then(|value| value.trim().parse().ok()).unwrap_or_else(|| {
+            eprintln!("AGENT_BIND_ADDR 必须是一个 IPv4 或 IPv6 地址，例如 127.0.0.1");
+            std::process::exit(2);
+        }),
+    };
 
     sso::startup().await;
 
@@ -110,16 +118,23 @@ async fn main() {
         );
     }
 
-    let http_listener = tokio::net::TcpListener::bind(("0.0.0.0", http_port))
+    let http_listener = tokio::net::TcpListener::bind((bind_ip, http_port))
         .await
-        .unwrap_or_else(|err| panic!("HTTP 端口 {http_port} 绑定失败: {err}"));
-    let tcp_listener = tokio::net::TcpListener::bind(("0.0.0.0", tcp_port))
+        .unwrap_or_else(|err| panic!("HTTP 地址 {} 绑定失败: {err}", SocketAddr::new(bind_ip, http_port)));
+    let tcp_listener = tokio::net::TcpListener::bind((bind_ip, tcp_port))
         .await
-        .unwrap_or_else(|err| panic!("TCP 端口 {tcp_port} 绑定失败: {err}"));
+        .unwrap_or_else(|err| panic!("TCP 地址 {} 绑定失败: {err}", SocketAddr::new(bind_ip, tcp_port)));
+    let connect_ip = match bind_ip {
+        IpAddr::V4(ip) if ip.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
+        IpAddr::V6(ip) if ip.is_unspecified() => IpAddr::V6(Ipv6Addr::LOCALHOST),
+        ip => ip,
+    };
+    let http_addr = SocketAddr::new(connect_ip, http_listener.local_addr().unwrap().port());
+    let url = format!("http://{http_addr}");
 
     if !tui_mode {
-        println!("网页对话界面：http://127.0.0.1:{http_port}");
-        println!("裸 TCP 接口：  nc 127.0.0.1 {tcp_port}");
+        println!("网页对话界面：{url}");
+        println!("裸 TCP 接口：  nc {connect_ip} {}", tcp_listener.local_addr().unwrap().port());
     }
 
     let http_task = tokio::spawn(async move {
@@ -130,7 +145,7 @@ async fn main() {
     let tcp_task = tokio::spawn(serve_tcp(tcp_listener));
 
     if tui_mode {
-        let result = tui::run(http_port).await;
+        let result = tui::run(http_addr).await;
         http_task.abort();
         tcp_task.abort();
         let _ = http_task.await;
@@ -141,7 +156,6 @@ async fn main() {
         return;
     }
 
-    let url = format!("http://127.0.0.1:{http_port}");
     if std::env::var("AGENT_NO_BROWSER").is_ok() {
         println!("已跳过自动打开浏览器（AGENT_NO_BROWSER 已设置）");
     } else if let Err(err) = webbrowser::open(&url) {
