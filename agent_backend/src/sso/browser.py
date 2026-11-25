@@ -714,9 +714,14 @@ def recognize_captcha(encoded):
 
 async def handle_request(request):
     action = request.get("action")
-    if action not in {"login", "read", "open", "fetch"}:
+    if action not in {"login", "read", "open", "fetch", "cached_fetch"}:
         raise SsoError("未知的 SSO 操作")
     account = normalize_account(request.get("account", "")) if request.get("account", "").strip() else "anonymous"
+    if action == "cached_fetch":
+        saved = Path(request["directory"]) / hashlib.sha256(account.encode()).hexdigest() / "cookies.json"
+        if not saved.is_file():
+            raise SsoError("尚无保存的 jAccount 登录状态")
+        action = "fetch"
     password = request.get("password", "")
     if action == "login" and (account == "anonymous" or not password):
         raise SsoError("EMAIL_USER_ACCOUNT 和 EMAIL_USER_PASSWORD 不能为空")

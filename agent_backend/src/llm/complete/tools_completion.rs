@@ -25,6 +25,8 @@ mod office;
 mod open_usual_website;
 mod pdf_analysis;
 mod read;
+#[cfg(target_os = "macos")]
+pub(crate) mod reminders;
 mod search_files;
 mod shuiyuan;
 mod shuiyuan_search;

@@ -110,8 +110,8 @@ async fn run_helper(
         "directory": state_dir()?,
         "browser": std::env::var("AGENT_SSO_BROWSER").ok(),
         "process_guard": PROCESS_GUARD,
-        "headless": action != "open"
-            && std::env::var("AGENT_SSO_HEADLESS").as_deref() != Ok("0"),
+        "headless": action == "cached_fetch" || (action != "open"
+            && std::env::var("AGENT_SSO_HEADLESS").as_deref() != Ok("0")),
     });
     let mut command = Command::new(python);
     command
@@ -204,6 +204,16 @@ pub async fn visit_site(url: &str, show: bool) -> Result<String, String> {
 /// 打开校园站点的入口页（浏览器自动走完 jAccount 单点登录跳转），再在该页面内依次发起站内请求，
 /// 用于需要登录态的 JSON 接口与表单查询。jAccount 会话过期时自动重新登录一次。
 pub async fn campus_fetch(entry: &str, requests: &[FetchRequest], limit: usize) -> Result<Vec<FetchResponse>, String> {
+    fetch_campus(entry, requests, limit, false).await
+}
+
+/// Reminders only reuse an existing session. Never initiate a login or show a browser.
+#[cfg(target_os = "macos")]
+pub async fn cached_campus_fetch(entry: &str, requests: &[FetchRequest], limit: usize) -> Result<Vec<FetchResponse>, String> {
+    fetch_campus(entry, requests, limit, true).await
+}
+
+async fn fetch_campus(entry: &str, requests: &[FetchRequest], limit: usize, cached_only: bool) -> Result<Vec<FetchResponse>, String> {
     if !is_campus_url(entry) {
         return Err("campus_fetch 只用于交大站点".into());
     }
@@ -212,9 +222,10 @@ pub async fn campus_fetch(entry: &str, requests: &[FetchRequest], limit: usize) 
         .filter(|account| !account.trim().is_empty())
         .ok_or("请在 .env 中设置 EMAIL_USER_ACCOUNT 和 EMAIL_USER_PASSWORD，校园系统需要 jAccount 登录")?;
     let payload = serde_json::to_value(requests).map_err(|error| error.to_string())?;
-    let attempt = || run_helper("fetch", account.clone(), String::new(), entry, limit, payload.clone());
+    let action = if cached_only { "cached_fetch" } else { "fetch" };
+    let attempt = || run_helper(action, account.clone(), String::new(), entry, limit, payload.clone());
     let result = match attempt().await {
-        Err(error) if format!("{error:#}").contains("需要 jAccount 登录") => {
+        Err(error) if !cached_only && format!("{error:#}").contains("需要 jAccount 登录") => {
             login(json!({})).await?;
             attempt().await
         }
