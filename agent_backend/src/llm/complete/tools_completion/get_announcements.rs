@@ -148,6 +148,59 @@ fn window_days(arguments: &Value) -> Result<i64, String> {
     }
 }
 
+/// 读取公告：course_id 为 None 时查所有进行中的课程；同时返回课程 id → 名称。
+pub(super) async fn fetch_announcements(
+    canvas: &Canvas,
+    course_id: Option<&str>,
+    now: DateTime<FixedOffset>,
+    days: i64,
+) -> Result<(Vec<Announcement>, HashMap<String, String>), String> {
+    let courses: Vec<Course> = canvas
+        .get_all("/api/v1/courses", &[("enrollment_state", "active".into())], "课程列表")
+        .await?;
+    let names: HashMap<String, String> = courses
+        .iter()
+        .map(|course| (format!("course_{}", course.id), course.name.clone()))
+        .collect();
+    let codes: Vec<String> = match course_id {
+        Some(id) => vec![format!("course_{id}")],
+        None => courses.iter().map(|course| format!("course_{}", course.id)).collect(),
+    };
+    if codes.is_empty() {
+        return Ok((Vec::new(), names));
+    }
+    let mut query: Vec<(&str, String)> = codes.into_iter().map(|code| ("context_codes[]", code)).collect();
+    query.push(("start_date", (now - Duration::days(days)).to_rfc3339()));
+    query.push(("end_date", (now + Duration::days(1)).to_rfc3339()));
+    let announcements = canvas.get_all("/api/v1/announcements", &query, "课程公告").await?;
+    Ok((announcements, names))
+}
+
+/// 今日简报用：“【课程】标题（今天 09:30，未读）”，从新到旧。
+pub(super) fn brief_lines(
+    announcements: &mut [Announcement],
+    names: &HashMap<String, String>,
+    now: DateTime<FixedOffset>,
+) -> Vec<String> {
+    announcements.sort_by_key(|announcement| std::cmp::Reverse(announcement.posted()));
+    announcements
+        .iter()
+        .map(|announcement| {
+            let course = names
+                .get(&announcement.context_code)
+                .map(String::as_str)
+                .unwrap_or(announcement.context_code.as_str());
+            let mut meta = announcement
+                .posted()
+                .map_or("时间未知".to_string(), |time| fmt_day_time(time, now));
+            if announcement.read_state.as_deref() == Some("unread") {
+                meta.push_str("，未读");
+            }
+            format!("【{course}】{}（{meta}）", announcement.title.trim())
+        })
+        .collect()
+}
+
 pub(super) async fn get_announcements(arguments: Value) -> Result<String, String> {
     let days = window_days(&arguments)?;
     let course_id = match &arguments["course_id"] {
@@ -159,29 +212,11 @@ pub(super) async fn get_announcements(arguments: Value) -> Result<String, String
         return Err("course_id 应为数字，可先用 get_courses 查询".into());
     }
     let canvas = Canvas::from_env()?;
-    let courses: Vec<Course> = canvas
-        .get_all(
-            "/api/v1/courses",
-            &[("enrollment_state", "active".into())],
-            "课程列表",
-        )
-        .await?;
-    let names: HashMap<String, String> = courses
-        .iter()
-        .map(|course| (format!("course_{}", course.id), course.name.clone()))
-        .collect();
-    let codes: Vec<String> = match &course_id {
-        Some(id) => vec![format!("course_{id}")],
-        None => courses.iter().map(|course| format!("course_{}", course.id)).collect(),
-    };
-    if codes.is_empty() {
+    let now = campus_time::now();
+    let (mut announcements, names) = fetch_announcements(&canvas, course_id.as_deref(), now, days).await?;
+    if names.is_empty() {
         return Ok("没有进行中的课程。".into());
     }
-    let now = campus_time::now();
-    let mut query: Vec<(&str, String)> = codes.into_iter().map(|code| ("context_codes[]", code)).collect();
-    query.push(("start_date", (now - Duration::days(days)).to_rfc3339()));
-    query.push(("end_date", (now + Duration::days(1)).to_rfc3339()));
-    let mut announcements: Vec<Announcement> = canvas.get_all("/api/v1/announcements", &query, "课程公告").await?;
     Ok(clip(&render_announcements(&mut announcements, &names, &canvas, now, days)))
 }
 

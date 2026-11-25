@@ -266,6 +266,54 @@ fn run_mail(
     result
 }
 
+/// 今日简报用：收件箱未读总数，以及最新几封未读的“发件人 · 主题”。只读，不改变已读状态。
+pub(super) async fn unread_brief(limit: usize) -> Result<(usize, Vec<String>), String> {
+    tokio::task::spawn_blocking(move || {
+        let config = MailConfig::from_env()?;
+        let mut session = mail_connect(&config)?;
+        let mut run = || -> Result<(usize, Vec<String>), String> {
+            session.examine("INBOX").map_err(|err| format!("打开 INBOX 失败: {err}"))?;
+            let mut uids: Vec<u32> = session
+                .uid_search("UNSEEN")
+                .map_err(|err| format!("搜索未读邮件失败: {err}"))?
+                .into_iter()
+                .collect();
+            uids.sort_unstable();
+            let total = uids.len();
+            let latest: Vec<u32> = uids.into_iter().rev().take(limit).collect();
+            if latest.is_empty() {
+                return Ok((total, Vec::new()));
+            }
+            let messages = session
+                .uid_fetch(uid_set(&latest), "(BODY.PEEK[HEADER])")
+                .map_err(|err| format!("读取邮件列表失败: {err}"))?;
+            let parser = mail_parser::MessageParser::default();
+            let mut lines: Vec<(u32, String)> = messages
+                .iter()
+                .map(|message| {
+                    let parsed = message.header().and_then(|raw| parser.parse(raw));
+                    let from = parsed
+                        .as_ref()
+                        .and_then(|parsed| parsed.from().and_then(|list| list.first()).map(format_addr))
+                        .unwrap_or_else(|| "(未知发件人)".into());
+                    let subject = parsed
+                        .as_ref()
+                        .and_then(|parsed| parsed.subject().map(str::to_string))
+                        .unwrap_or_else(|| "(无主题)".into());
+                    (message.uid.unwrap_or(0), format!("{} · {}", one_line(&from), one_line(&subject)))
+                })
+                .collect();
+            lines.sort_by_key(|(uid, _)| std::cmp::Reverse(*uid));
+            Ok((total, lines.into_iter().map(|(_, line)| line).collect()))
+        };
+        let result = run();
+        let _ = session.logout();
+        result
+    })
+    .await
+    .map_err(|err| format!("邮件任务失败: {err}"))?
+}
+
 pub(super) async fn mail_fetch(arguments: serde_json::Value) -> Result<String, String> {
     let action = arguments["action"]
         .as_str()

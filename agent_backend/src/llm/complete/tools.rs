@@ -325,6 +325,18 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
     }),
     ChatCompletionTools::Function(ChatCompletionTool {
         function: (FunctionObject {
+            name: "daily_brief".to_string(),
+            description: Some(
+                "今日简报：一次并发汇总今天的课（晚上附明天的课）、14 天内的考试、48 小时内截止和逾期未交的作业、\
+                 最近 24 小时的课程公告、未读邮件。用户说“早上好”“今天有什么安排”“帮我看看今天”“最近要忙什么”时首选它，\
+                 再按需用其他工具查细节。".to_string(),
+            ),
+            parameters: Some(json!({"type":"object","properties":{},"required":[],"additionalProperties":false})),
+            strict: Some(true),
+        }),
+    }),
+    ChatCompletionTools::Function(ChatCompletionTool {
+        function: (FunctionObject {
             name: "get_time_stamp".to_string(),
             description: Some(
                 "获取当前北京时间、星期、交大校历的教学周（是否考试周、节假日）以及当前处于第几节课。\

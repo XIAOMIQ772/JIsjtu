@@ -227,12 +227,8 @@ fn window_days(arguments: &Value) -> Result<i64, String> {
     }
 }
 
-pub(super) async fn get_deadlines(arguments: Value) -> Result<String, String> {
-    let days = window_days(&arguments)?;
-    let include_completed = arguments["include_completed"].as_bool().unwrap_or(false);
-    let canvas = Canvas::from_env()?;
-    let now = campus_time::now();
-    let items: Vec<PlannerItem> = canvas
+pub(super) async fn fetch_planner(canvas: &Canvas, now: DateTime<FixedOffset>, days: i64) -> Result<Vec<PlannerItem>, String> {
+    canvas
         .get_all(
             "/api/v1/planner/items",
             &[
@@ -241,7 +237,32 @@ pub(super) async fn get_deadlines(arguments: Value) -> Result<String, String> {
             ],
             "计划器（近期截止事项）",
         )
-        .await?;
+        .await
+}
+
+/// 今日简报用：hours 小时内截止且未完成的事项，以及逾期未交的事项。
+pub(super) fn brief_lines(items: &[PlannerItem], now: DateTime<FixedOffset>, hours: i64) -> (Vec<String>, Vec<String>) {
+    let mut soon: Vec<(DateTime<FixedOffset>, String)> = Vec::new();
+    let mut overdue: Vec<(DateTime<FixedOffset>, String)> = Vec::new();
+    for item in items.iter().filter(|item| !item.planner_override.dismissed && item.plannable_type != "announcement") {
+        let (Some(time), State::Pending) = (item.time(), item.state()) else { continue };
+        if time >= now && time <= now + Duration::hours(hours) {
+            soon.push((time, format!("{}（{}，{}）", item.headline(now), item.status(), fmt_remaining(time, now))));
+        } else if time < now {
+            overdue.push((time, format!("{}（{}）", item.headline(now), item.status())));
+        }
+    }
+    soon.sort_by_key(|(time, _)| *time);
+    overdue.sort_by_key(|(time, _)| std::cmp::Reverse(*time));
+    (soon.into_iter().map(|(_, line)| line).collect(), overdue.into_iter().map(|(_, line)| line).collect())
+}
+
+pub(super) async fn get_deadlines(arguments: Value) -> Result<String, String> {
+    let days = window_days(&arguments)?;
+    let include_completed = arguments["include_completed"].as_bool().unwrap_or(false);
+    let canvas = Canvas::from_env()?;
+    let now = campus_time::now();
+    let items = fetch_planner(&canvas, now, days).await?;
     Ok(clip(&render_deadlines(&items, &canvas, now, days, include_completed)))
 }
 

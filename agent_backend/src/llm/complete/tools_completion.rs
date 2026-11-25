@@ -5,6 +5,7 @@ mod campus_time;
 mod canvas;
 mod course_files;
 mod create_subagents;
+mod daily_brief;
 mod edit;
 mod eduinfo;
 mod find_classroom;
@@ -40,6 +41,7 @@ pub async fn call(name: &str, arguments: serde_json::Value) -> Result<String, St
         "write" => write::run_write(arguments).await,
         "edit" => edit::run_edit(arguments).await,
         "get_time_stamp"=>get_time_stamp::get_time_stamp(arguments).await,
+        "daily_brief"=>daily_brief::daily_brief(arguments).await,
         "get_courses"=>get_courses::get_courses(arguments).await,
         "get_exam"=>get_exam::get_exam(arguments).await,
         "get_deadlines"=>get_deadlines::get_deadlines(arguments).await,
