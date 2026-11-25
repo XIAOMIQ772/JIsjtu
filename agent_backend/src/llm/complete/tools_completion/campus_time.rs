@@ -39,6 +39,23 @@ pub(super) fn fmt_time(time: DateTime<FixedOffset>, now: DateTime<FixedOffset>) 
     )
 }
 
+/// 近三天用“今天/明天/后天”，其余同 fmt_time：“明天 周四 23:59”。
+pub(super) fn fmt_day_time(time: DateTime<FixedOffset>, now: DateTime<FixedOffset>) -> String {
+    let label = match (time.date_naive() - now.date_naive()).num_days() {
+        0 => "今天",
+        1 => "明天",
+        2 => "后天",
+        -1 => "昨天",
+        _ => return fmt_time(time, now),
+    };
+    format!(
+        "{label} {} {:02}:{:02}",
+        weekday_cn(time.weekday()),
+        time.hour(),
+        time.minute()
+    )
+}
+
 /// 截止前显示“还剩…”，截止后显示“已过…”。
 pub(super) fn fmt_remaining(due: DateTime<FixedOffset>, now: DateTime<FixedOffset>) -> String {
     let minutes = (due - now).num_minutes();

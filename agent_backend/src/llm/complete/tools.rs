@@ -157,6 +157,26 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
     }),
     ChatCompletionTools::Function(ChatCompletionTool {
         function: (FunctionObject {
+            name: "get_deadlines".to_string(),
+            description: Some(
+                "一次汇总所有课程近期的截止事项（Canvas 作业、测验、讨论、日程和个人待办），按截止时间排序，\
+                 标出今天/明天、剩余时间、是否已提交，并列出最近两周已截止但还没交的作业。\
+                 用户问“最近有什么 DDL”“这周要交什么”“还有哪些作业没写”时首选它，不必逐门课调用 get_exam。".to_string(),
+            ),
+            parameters: Some(json!({
+                "type":"object",
+                "properties":{
+                    "days":{"type":["integer","null"],"description":"向后看多少天，1 到 60，null 表示默认 14 天；问“这周”可传 7"},
+                    "include_completed":{"type":["boolean","null"],"description":"true 时也列出窗口内已完成的事项；默认只给数量"}
+                },
+                "required":["days","include_completed"],
+                "additionalProperties":false
+            })),
+            strict: Some(true),
+        }),
+    }),
+    ChatCompletionTools::Function(ChatCompletionTool {
+        function: (FunctionObject {
             name: "watch_shuiyuan".to_string(),
             description: Some(
                 "打开水源社区，复用 jAccount 登录状态。默认 show：打开可见网页并保留给用户。只有用户让助手查询、阅读、提取或总结网页内容时，才明确传 read，在后台读取后自动关闭临时页面。".to_string(),
