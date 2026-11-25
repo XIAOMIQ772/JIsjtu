@@ -110,3 +110,22 @@ async fn homework_submits_directly_or_from_the_latest_preview() {
 
     let _ = std::fs::remove_file(&file);
 }
+
+#[tokio::test]
+async fn homework_questions_read_word_documents() {
+    let document = r#"<w:document><w:body>
+        <w:p><w:r><w:t>第三次作业（请写出过程）</w:t></w:r></w:p>
+        <w:p><w:r><w:t>1. 求函数 f(x) = x² 的导数（10分）</w:t></w:r></w:p>
+        <w:p><w:r><w:t>2. 证明 √2 是无理数</w:t></w:r></w:p>
+        </w:body></w:document>"#;
+    let dir = std::env::temp_dir().join(format!("jisjtu-homework-docx-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("作业3.docx");
+    std::fs::write(&path, crate::llm::complete::tools_completion::office::zip_for_tests(&[("word/document.xml", document, true)])).unwrap();
+    let result = call("homework", json!({"action": "questions", "path": path.to_string_lossy()})).await.unwrap();
+    assert!(result.contains("识别到 2 道题"), "{result}");
+    assert!(result.contains("第 1 题 · 1 · 第 1 页 · 10 分"), "{result}");
+    assert!(result.contains("证明 √2 是无理数"), "{result}");
+    assert!(result.contains("第三次作业（请写出过程）"), "题前说明保留：{result}");
+    std::fs::remove_dir_all(dir).unwrap();
+}

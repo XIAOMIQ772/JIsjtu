@@ -4,6 +4,7 @@ use std::sync::{LazyLock, Mutex, OnceLock};
 use regex::Regex;
 
 use super::course_files::{CanvasFile, download_file};
+use super::office::document_pages;
 use super::pdf_analysis::load_pdf_pages;
 use super::text::html_to_text;
 use super::{MAX_OUTPUT_CHARS, clip};
@@ -519,6 +520,8 @@ async fn homework_questions(arguments: &serde_json::Value) -> Result<String, Str
             || std::fs::read(path).map(|bytes| bytes.starts_with(b"%PDF")).unwrap_or(false);
         let pages: Vec<String> = if is_pdf {
             load_pdf_pages(path).await?.as_ref().clone()
+        } else if let Some(pages) = document_pages(Path::new(path)) {
+            pages?
         } else {
             vec![tokio::fs::read_to_string(path)
                 .await
@@ -532,7 +535,7 @@ async fn homework_questions(arguments: &serde_json::Value) -> Result<String, Str
         homework_arg(arguments, "course_id"),
         homework_arg(arguments, "assignment_id"),
     ) else {
-        return Err("请提供题目来源：path（本地 PDF/文本）、text（作业文字）或 course_id + assignment_id（Canvas 作业）".to_string());
+        return Err("请提供题目来源：path（本地 PDF、Word、PowerPoint 或文本文件）、text（作业文字）或 course_id + assignment_id（Canvas 作业）".to_string());
     };
 
     let token = canvas_token()?;
@@ -552,25 +555,34 @@ async fn homework_questions(arguments: &serde_json::Value) -> Result<String, Str
     }
 
     let mut pages: Vec<String> = Vec::new();
-    for (path, _) in attachments.iter().filter(|(_, is_pdf)| *is_pdf) {
-        let path = path.to_string_lossy();
-        match load_pdf_pages(&path).await {
+    for (path, is_pdf) in &attachments {
+        // PDF 按页读取；Word 整篇、PowerPoint 每页一段；其他附件留给对应工具
+        let loaded: Result<Vec<String>, String> = if *is_pdf {
+            load_pdf_pages(&path.to_string_lossy()).await.map(|pages| pages.as_ref().clone())
+        } else {
+            match document_pages(path) {
+                Some(result) => result,
+                None => continue,
+            }
+        };
+        match loaded {
             Ok(loaded) => {
                 header.push_str(&format!(
-                    "{path} 对应第 {}–{} 页\n",
+                    "{} 对应第 {}–{} 页\n",
+                    path.display(),
                     pages.len() + 1,
                     pages.len() + loaded.len()
                 ));
-                pages.extend(loaded.iter().cloned());
+                pages.extend(loaded);
             }
-            Err(err) => header.push_str(&format!("{path} 无法提取文字：{err}\n")),
+            Err(err) => header.push_str(&format!("{} 无法提取文字：{err}\n", path.display())),
         }
     }
 
     if pages.is_empty() {
         if description.is_empty() {
             return Ok(format!(
-                "{header}\n作业说明为空，也没有可读取的 PDF 附件。其他附件请用对应工具读取。"
+                "{header}\n作业说明为空，也没有可读取的附件（PDF、Word、PowerPoint）。其他附件请用对应工具读取。"
             ));
         }
         header.push_str("题目来源：作业说明文字\n");
@@ -581,7 +593,7 @@ async fn homework_questions(arguments: &serde_json::Value) -> Result<String, Str
         let description: String = description.chars().take(HOMEWORK_PREAMBLE_CHARS).collect();
         header.push_str(&format!("\n[作业说明]\n{description}\n"));
     }
-    header.push_str("题目来源：PDF 附件\n");
+    header.push_str("题目来源：附件\n");
     render_questions(&header, &split_questions(&pages), only)
 }
 

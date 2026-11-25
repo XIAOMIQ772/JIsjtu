@@ -441,7 +441,7 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
             name: "homework".to_string(),
             description: Some(
                 "帮用户写作业并提交到 Canvas。action=questions：从作业来源中准确切分题目，返回每道题的编号、页码、分值、小问和完整题干；\
-                 来源三选一：path=本地 PDF 或文本文件，text=作业只是一段文字时直接传入，course_id+assignment_id=Canvas 作业（自动读取说明并下载其中的 PDF 附件）。\
+                 来源三选一：path=本地 PDF、Word（docx）、PowerPoint（pptx）或文本文件，text=作业只是一段文字时直接传入，course_id+assignment_id=Canvas 作业（自动读取说明并下载其中的 PDF/Word/PowerPoint 附件）。\
                  题目较多时先返回目录，再用 question 传序号读取单题。写作业时先用它拿到题目再逐题作答。\
                  action=submit：text 为在线文本提交，files 为上传本地文件提交，二者只能选一。\
                  用户已经明确说可以提交（如“写完直接交”“提交吧”）时，传 confirm=true 直接提交；\
@@ -458,7 +458,7 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
                     },
                     "path":{
                         "type":"string",
-                        "description":"questions：作业 PDF 或文本文件的绝对路径"
+                        "description":"questions：作业 PDF、docx、pptx 或文本文件的绝对路径"
                     },
                     "text":{
                         "type":"string",

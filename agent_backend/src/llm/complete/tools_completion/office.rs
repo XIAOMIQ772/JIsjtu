@@ -252,13 +252,13 @@ fn numbered(names: &[&str], prefix: &str) -> Vec<(usize, String)> {
     found
 }
 
-pub(super) fn read_pptx(zip: &Zip, start: Option<usize>, end: Option<usize>) -> Result<String, String> {
+/// 每页幻灯片的（正文, 讲者备注），按页码顺序。
+fn slide_texts(zip: &Zip) -> Result<Vec<(String, String)>, String> {
     let names: Vec<&str> = zip.names().collect();
     let slides = numbered(&names, "ppt/slides/slide");
     if slides.is_empty() {
         return Err("没有找到幻灯片内容".into());
     }
-    let total = slides.len();
     let mut pages = Vec::new();
     for (number, name) in &slides {
         let text = drawing_text(&zip.read(name)?);
@@ -278,7 +278,12 @@ pub(super) fn read_pptx(zip: &Zip, start: Option<usize>, end: Option<usize>) -> 
             .unwrap_or_default();
         pages.push((text, notes));
     }
+    Ok(pages)
+}
 
+pub(super) fn read_pptx(zip: &Zip, start: Option<usize>, end: Option<usize>) -> Result<String, String> {
+    let pages = slide_texts(zip)?;
+    let total = pages.len();
     if start.is_none() && end.is_none() && total > OUTLINE_SLIDES {
         let mut out = format!("共 {total} 页幻灯片，内容较多，以下是每页第一行，可当作目录：\n");
         for (index, (text, _)) in pages.iter().enumerate() {
@@ -421,6 +426,32 @@ pub(super) fn read_xlsx(zip: &Zip, start: Option<usize>, end: Option<usize>) -> 
     Ok(out)
 }
 
+/// 作业题目识别用：pptx 每页一段（含备注），docx 整篇一段；不是这两种文件时返回 None。
+pub(super) fn document_pages(path: &std::path::Path) -> Option<Result<Vec<String>, String>> {
+    let extension = path.extension()?.to_string_lossy().to_lowercase();
+    if !matches!(extension.as_str(), "docx" | "pptx") {
+        return None;
+    }
+    let read = || -> Result<Vec<String>, String> {
+        let data = std::fs::read(path).map_err(|err| format!("读取 {} 失败: {err}", path.display()))?;
+        let zip = Zip::open(data)?;
+        if extension == "docx" {
+            return Ok(vec![word_text(&zip.read("word/document.xml")?)]);
+        }
+        Ok(slide_texts(&zip)?
+            .into_iter()
+            .map(|(text, notes)| if notes.is_empty() { text } else { format!("{text}\n{notes}") })
+            .collect())
+    };
+    Some(read())
+}
+
+/// 测试用：生成最小的 ZIP（可选 deflate），供其他模块的测试构造 docx/pptx。
+#[cfg(test)]
+pub(super) fn zip_for_tests(entries: &[(&str, &str, bool)]) -> Vec<u8> {
+    tests::make_zip(entries)
+}
+
 // ———————————————————————— 工具入口 ————————————————————————
 
 fn index_arg(arguments: &serde_json::Value, key: &str) -> Option<usize> {
@@ -469,7 +500,7 @@ mod tests {
     use std::io::Write;
 
     /// 测试用的最小 ZIP 写入：可选 deflate 压缩，CRC 填 0（读取端不校验）。
-    fn make_zip(entries: &[(&str, &str, bool)]) -> Vec<u8> {
+    pub(super) fn make_zip(entries: &[(&str, &str, bool)]) -> Vec<u8> {
         let mut data = Vec::new();
         let mut central = Vec::new();
         for (name, content, deflate) in entries {
