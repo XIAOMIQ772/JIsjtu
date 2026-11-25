@@ -100,8 +100,8 @@ app_dir=$(CDPATH= cd -- "$(dirname -- "$0")/../share/JIsjtu" && pwd)
 if [ "$#" -gt 0 ]; then
     case "$1" in
         --config) printf '%s/.env\n' "$app_dir"; exit 0 ;;
-        --help) printf 'JIsjtu             默认启动终端界面（TUI）\nJIsjtu --web       启动网页界面，也可使用 JIsjtu web\nJIsjtu --tui       显式启动终端界面\nJIsjtu --sso-login 单独检查或登录 jAccount\nJIsjtu --config    显示配置文件位置\n按 Ctrl+C 停止服务。\n'; exit 0 ;;
-        --web|web|--sso-login|--tui) ;;
+        --help) printf 'JIsjtu             默认启动终端界面（TUI）\nJIsjtu --web       启动网页界面，也可使用 JIsjtu web\nJIsjtu --tui       显式启动终端界面\nJIsjtu --sso-login 单独检查或登录 jAccount\nJIsjtu --doctor    检查配置是否可用\nJIsjtu --tool 工具名 [JSON 参数]  不经模型直接调用工具（调试用）\nJIsjtu --config    显示配置文件位置\n按 Ctrl+C 停止服务。\n'; exit 0 ;;
+        --web|web|--sso-login|--tui|--doctor|--tool) ;;
         *) printf '未知参数：%s；使用 JIsjtu --help 查看帮助。\n' "$1" >&2; exit 1 ;;
     esac
 fi
