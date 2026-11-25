@@ -425,7 +425,7 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
             name: "course_files".to_string(),
             description: Some(
                 "查看某门课程在 Canvas 上的文件（讲义、课件、作业附件等）。\
-                 可以列出文件、把文件下载到本地、或下载后用系统默认程序打开。".to_string(),
+                 可以列出文件、下载单个文件或整门课的全部文件、下载后用系统默认程序打开。".to_string(),
             ),
             parameters: Some(json!({
                 "type":"object",
@@ -436,8 +436,8 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
                     },
                     "action":{
                         "type":"string",
-                        "enum":["list","download","open"],
-                        "description":"list=列出文件；download=下载供后台分析；open=下载并展示给用户，仅在用户明确要查看文件时使用。为查询或分析资料应下载后用 pdf_analysis（PDF）或 read_office（pptx/docx/xlsx）读取。"
+                        "enum":["list","download","download_all","open"],
+                        "description":"list 列出文件，download 下载单个文件，download_all 下载该课程可见的全部文件，open 下载并展示给用户。分析资料时下载后用 pdf_analysis 或 read_office 读取。"
                     },
                     "file":{
                         "type":"string",
@@ -445,7 +445,7 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
                     },
                     "save_path":{
                         "type":"string",
-                        "description":"保存的完整路径，不传则存到 ~/Downloads/<原文件名>"
+                        "description":"download_all 时为目录，默认 ~/Downloads/Canvas-<课程id>。下载单个文件时为完整文件路径，默认保存到 ~/Downloads。"
                     }
                 },
                 "required":["course_id","action"],

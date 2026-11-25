@@ -194,6 +194,8 @@ const PARALLEL_SAFE: &[&str] = &[
     "get_deadlines",
     "get_announcements",
     "get_grades",
+    "search_files",
+    "degree_progress",
     "daily_brief",
     "library_status",
     "find_classroom",

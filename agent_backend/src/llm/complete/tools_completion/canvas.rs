@@ -124,7 +124,7 @@ pub(super) fn next_link(header: &str) -> Option<String> {
     })
 }
 
-fn same_origin(url: &str, base: &str) -> bool {
+pub(super) fn same_origin(url: &str, base: &str) -> bool {
     match (reqwest::Url::parse(url), reqwest::Url::parse(base)) {
         (Ok(url), Ok(base)) => url.origin() == base.origin(),
         _ => false,

@@ -1,9 +1,9 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use tokio::io::AsyncWriteExt;
 
-use super::canvas::next_link;
+use super::canvas::{CANVAS_BASE, next_link, same_origin};
 use super::clip;
-
-const FILES_MAX_PAGES: usize = 10;
 
 #[derive(serde::Deserialize)]
 pub(super) struct CanvasFile {
@@ -80,10 +80,31 @@ impl CanvasFile {
             None => "大小未知".to_string(),
         }
     }
+
+    fn bulk_name(&self) -> String {
+        let name = self.local_name();
+        let prefix = format!("{}-", self.id);
+        let available = 255 - prefix.len();
+        if name.len() <= available {
+            return format!("{prefix}{name}");
+        }
+        let suffix = name
+            .rfind('.')
+            .map(|at| &name[at..])
+            .filter(|s| s.len() <= 32)
+            .unwrap_or("");
+        let end = name.floor_char_boundary(available - suffix.len());
+        format!("{prefix}{}{suffix}", &name[..end])
+    }
 }
 
-fn page_url(base: &str, path: &str, page: usize) -> String {
-    format!("{base}{path}?per_page=100&page={page}")
+fn course_segment(course_id: &str) -> Result<String, String> {
+    if matches!(course_id, "" | "." | "..") || course_id.chars().any(char::is_control) {
+        return Err("课程 id 无效，可用 get_courses 查看".into());
+    }
+    let mut url = reqwest::Url::parse(CANVAS_BASE).expect("Canvas HTTPS origin");
+    url.path_segments_mut().unwrap().push(course_id);
+    Ok(url.path().trim_start_matches('/').to_string())
 }
 
 pub(super) async fn fetch_course_files(
@@ -91,12 +112,16 @@ pub(super) async fn fetch_course_files(
     token: &str,
     course_id: &str,
 ) -> Result<Vec<CanvasFile>, String> {
-    let base = "https://oc.sjtu.edu.cn";
-    let path = format!("/api/v1/courses/{course_id}/files");
-    let mut url = page_url(base, &path, 1);
+    let course_id = course_segment(course_id)?;
+    let mut url = format!("{CANVAS_BASE}/api/v1/courses/{course_id}/files?per_page=100&page=1");
     let mut files = Vec::new();
+    let mut pages = HashSet::new();
+    let mut ids = HashSet::new();
 
-    for _ in 0..FILES_MAX_PAGES {
+    loop {
+        if !same_origin(&url, CANVAS_BASE) || !pages.insert(url.clone()) {
+            return Err("Canvas 文件分页地址异常，未能取得完整列表".into());
+        }
         let response = client
             .get(&url)
             .bearer_auth(token)
@@ -109,7 +134,9 @@ pub(super) async fn fetch_course_files(
             return Err("认证失败 (401)：令牌无效或已过期".to_string());
         }
         if status == reqwest::StatusCode::NOT_FOUND {
-            return Err(format!("课程 {course_id} 不存在，或该课程未启用「文件」页面"));
+            return Err(format!(
+                "课程 {course_id} 不存在，或该课程未启用「文件」页面"
+            ));
         }
         if !status.is_success() {
             return Err(format!("Canvas 返回 {status}"));
@@ -125,12 +152,11 @@ pub(super) async fn fetch_course_files(
             .json()
             .await
             .map_err(|err| format!("解析文件列表失败: {err}"))?;
-        let empty = batch.is_empty();
-        files.extend(batch);
+        files.extend(batch.into_iter().filter(|file| ids.insert(file.id)));
 
         match next {
-            Some(next_url) if !empty => url = next_url,
-            _ => break,
+            Some(next_url) => url = next_url,
+            None => break,
         }
     }
 
@@ -155,7 +181,9 @@ fn pick_file<'a>(files: &'a [CanvasFile], target: &str) -> Result<&'a CanvasFile
         .collect();
 
     match matched.len() {
-        0 => Err(format!("没有匹配「{target}」的文件，可先用 action=list 查看")),
+        0 => Err(format!(
+            "没有匹配「{target}」的文件，可先用 action=list 查看"
+        )),
         1 => Ok(matched[0]),
         count => {
             let mut text = format!("匹配到 {count} 个文件，请用更精确的名字或文件 id：\n");
@@ -167,18 +195,10 @@ fn pick_file<'a>(files: &'a [CanvasFile], target: &str) -> Result<&'a CanvasFile
     }
 }
 
-fn save_target(file: &CanvasFile, requested: Option<&str>) -> PathBuf {
-    if let Some(path) = requested {
-        if !path.is_empty() {
-            return PathBuf::from(path);
-        }
-    }
-
-    let dir = std::env::var("HOME")
+fn downloads_dir() -> PathBuf {
+    std::env::var("HOME")
         .map(|home| PathBuf::from(home).join("Downloads"))
-        .unwrap_or_else(|_| PathBuf::from("."));
-
-    dir.join(file.local_name())
+        .unwrap_or_else(|_| PathBuf::from("."))
 }
 
 fn open_with_system(path: &Path) -> Result<(), String> {
@@ -201,43 +221,126 @@ fn open_with_system(path: &Path) -> Result<(), String> {
         .map_err(|err| format!("调用 {program} 失败: {err}"))
 }
 
+async fn download_to_temp(
+    client: &reqwest::Client,
+    token: &str,
+    file: &CanvasFile,
+    target: &Path,
+) -> Result<tempfile::NamedTempFile, String> {
+    let parent = target
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    let url = file
+        .url
+        .as_deref()
+        .ok_or_else(|| format!("文件 {} 没有提供下载地址", file.display_name))?;
+
+    let url = reqwest::Url::parse(url).map_err(|_| "Canvas 返回了无效的下载地址")?;
+    if url.scheme() != "https" {
+        return Err("Canvas 文件下载需要 HTTPS".into());
+    }
+    let mut request = client.get(url.clone());
+    if same_origin(url.as_str(), CANVAS_BASE) {
+        request = request.bearer_auth(token);
+    }
+    let mut response = request
+        .send()
+        .await
+        .map_err(|err| format!("下载失败：{}", err.without_url()))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("下载失败，服务器返回 {status}"));
+    }
+
+    let temp = tempfile::NamedTempFile::new_in(parent).map_err(|err| err.to_string())?;
+    let mut output = tokio::fs::File::from_std(temp.reopen().map_err(|err| err.to_string())?);
+    let mut length = 0u64;
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|err| err.without_url().to_string())?
+    {
+        output
+            .write_all(&chunk)
+            .await
+            .map_err(|err| err.to_string())?;
+        length += chunk.len() as u64;
+    }
+    output.flush().await.map_err(|err| err.to_string())?;
+    if file.size.is_some_and(|expected| expected != length) {
+        return Err(format!(
+            "下载字节数与 Canvas 记录不符，实际收到 {length} 字节"
+        ));
+    }
+    Ok(temp)
+}
+
 pub(super) async fn download_file(
     client: &reqwest::Client,
     token: &str,
     file: &CanvasFile,
     target: &Path,
 ) -> Result<String, String> {
-    if let Some(parent) = target.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    download_to_temp(client, token, file, target)
+        .await?
+        .persist(target)
+        .map_err(|err| format!("写入 {} 失败：{err}", target.display()))?;
+    Ok(format!(
+        "已保存到 {}({})",
+        target.display(),
+        file.human_size()
+    ))
+}
+
+async fn download_all(
+    client: &reqwest::Client,
+    token: &str,
+    files: &[CanvasFile],
+    dir: &Path,
+) -> Result<String, String> {
+    std::fs::create_dir_all(dir).map_err(|err| format!("无法创建目录 {}：{err}", dir.display()))?;
+    let mut saved = 0;
+    let mut skipped = 0;
+    let mut failures = Vec::new();
+    for file in files {
+        let name = file.bulk_name();
+        let path = dir.join(&name);
+        let result = match path.symlink_metadata() {
+            Ok(meta) if meta.is_file() && file.size.is_none_or(|size| size == meta.len()) => {
+                skipped += 1;
+                continue;
+            }
+            Ok(_) => Err("同名路径已存在，请移走该项后重试".into()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                match download_to_temp(client, token, file, &path).await {
+                    Ok(temp) => temp
+                        .persist_noclobber(&path)
+                        .map(|_| ())
+                        .map_err(|err| err.error.to_string()),
+                    Err(err) => Err(err),
+                }
+            }
+            Err(err) => Err(err.to_string()),
+        };
+        match result {
+            Ok(()) => saved += 1,
+            Err(err) => failures.push(format!("{name}：{err}")),
         }
     }
-
-    let url = file
-        .url
-        .as_deref()
-        .ok_or_else(|| format!("文件 {} 没有提供下载地址", file.display_name))?;
-
-    let response = client
-        .get(url)
-        .bearer_auth(token)
-        .send()
-        .await
-        .map_err(|err| format!("下载失败: {err}"))?;
-
-    let status = response.status();
-    if !status.is_success() {
-        return Err(format!("下载 {url} 返回 {status}"));
+    let report = format!(
+        "{} 个课程文件，已下载 {saved} 个，已有 {skipped} 个，失败 {} 个。\n目录：{}",
+        files.len(),
+        failures.len(),
+        dir.display()
+    );
+    if failures.is_empty() {
+        Ok(report)
+    } else {
+        Err(clip(&format!("{report}\n{}", failures.join("\n"))))
     }
-
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|err| format!("读取下载内容失败: {err}"))?;
-
-    std::fs::write(target, &bytes).map_err(|err| format!("写入 {} 失败: {err}", target.display()))?;
-
-    Ok(format!("已保存到 {}({})", target.display(), file.human_size()))
 }
 
 pub(super) async fn course_files(arguments: serde_json::Value) -> Result<String, String> {
@@ -282,24 +385,36 @@ pub(super) async fn course_files(arguments: serde_json::Value) -> Result<String,
         text.push_str(&format!(
             "\n网页地址：https://oc.sjtu.edu.cn/courses/{course_id}/files"
         ));
-        if files.len() == FILES_MAX_PAGES * 100 {
-            text.push_str("\n（列表可能有截断，只取了前 1000 个文件）");
-        }
         return Ok(clip(&text));
     }
 
+    if action == "download_all" {
+        let segment = course_segment(course_id)?;
+        let dir = requested_path
+            .map(PathBuf::from)
+            .unwrap_or_else(|| downloads_dir().join(format!("Canvas-{segment}")));
+        return download_all(&client, &token, &files, &dir).await;
+    }
     if action != "download" && action != "open" {
-        return Err(format!("未知的 action「{action}」，只支持 list / download / open"));
+        return Err(format!(
+            "未知的 action「{action}」，只支持 list / download / download_all / open"
+        ));
     }
 
     let target = target.ok_or_else(|| {
         format!("action={action} 时必须给出 file（文件名或文件 id），可先用 action=list 查看")
     })?;
     let file = pick_file(&files, target)?;
-    let path = save_target(file, requested_path);
+    let path = requested_path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| downloads_dir().join(file.local_name()));
 
     let mut report = download_file(&client, &token, file, &path).await?;
-    report.push_str(&format!("\n文件：{}（{}）", file.display_name, file.human_size()));
+    report.push_str(&format!(
+        "\n文件：{}（{}）",
+        file.display_name,
+        file.human_size()
+    ));
 
     if action == "open" {
         open_with_system(&path)?;
