@@ -290,6 +290,15 @@ async fn mock_completion(State(state): State<MockState>, Json(request): Json<Val
         response["choices"] = json!([]);
         return sse(vec![response]);
     }
+    if first_request && task == "parallel-task" {
+        let read = json!({"path": concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"), "limit": 1});
+        let calls = json!([
+            {"id": "p-time", "type": "function", "function": {"name": "get_time_stamp", "arguments": "{}"}},
+            {"id": "p-read", "type": "function", "function": {"name": "read", "arguments": read.to_string()}},
+            {"id": "p-bad", "type": "function", "function": {"name": "find_classroom", "arguments": "{\"date\":\"yesterday\"}"}},
+        ]);
+        return completion(json!({"role": "assistant", "content": null, "tool_calls": calls}));
+    }
     if first_request && matches!(task, "task-0" | "root-task") {
         let mut calls = vec![json!({
             "id": "time-call", "type": "function",
@@ -560,4 +569,66 @@ async fn interrupted_stream_keeps_partial_text_without_executing_tools() {
         assert_eq!(last["content"], "尚未完成的回复");
         assert!(last.get("tool_calls").is_none());
     }
+}
+
+#[tokio::test]
+async fn read_only_tool_batches_run_together_and_keep_call_order() {
+    let mock = MockModel::start(1).await;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut messages = new_messages();
+    let answer = tokio::time::timeout(
+        Duration::from_secs(10),
+        chat_with_tools(&mut messages, "parallel-task", &mock.client, "mock-model", Some(&tx), true),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(answer, "完成：parallel-task");
+    let mut tools = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        match event {
+            ChatEvent::ToolCall { name, .. } => tools.push(format!("call:{name}")),
+            ChatEvent::ToolResult { name, ok, .. } => tools.push(format!("result:{name}:{ok}")),
+            _ => {}
+        }
+    }
+    assert_eq!(
+        tools,
+        [
+            "call:get_time_stamp",
+            "call:read",
+            "call:find_classroom",
+            "result:get_time_stamp:true",
+            "result:read:true",
+            "result:find_classroom:false",
+        ],
+        "并发批次先全部宣布，再按调用顺序给出结果"
+    );
+    let history = serde_json::to_value(&messages).unwrap();
+    let results: Vec<&Value> = history
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|message| message["role"] == "tool")
+        .collect();
+    let ids: Vec<&str> = results.iter().map(|message| message["tool_call_id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["p-time", "p-read", "p-bad"]);
+    assert!(results[1]["content"].as_str().unwrap().contains("[package]"));
+    assert!(results[2]["content"].as_str().unwrap().contains("date"));
+}
+
+#[test]
+fn only_read_only_batches_run_in_parallel() {
+    use crate::llm::complete::runs_in_parallel;
+    use async_openai::types::chat::ChatCompletionMessageToolCall;
+    let call = |name: &str| {
+        let mut call = ChatCompletionMessageToolCall::default();
+        call.function.name = name.to_string();
+        call
+    };
+    assert!(runs_in_parallel(&[call("get_exam"), call("get_exam"), call("class_schedule")]));
+    assert!(!runs_in_parallel(&[call("get_exam")]), "单个调用不需要并发");
+    assert!(!runs_in_parallel(&[call("read"), call("bash")]), "有副作用的批次保持顺序");
+    assert!(!runs_in_parallel(&[call("get_exam"), call("homework")]));
+    assert!(!runs_in_parallel(&[call("watch_shuiyuan"), call("read")]), "可能打开可见网页的保持顺序");
 }

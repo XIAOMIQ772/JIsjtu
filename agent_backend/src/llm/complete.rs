@@ -1,11 +1,13 @@
 const MAX_REACT_STEPS: usize = 360;
 
 use async_openai::types::chat::{
-    ChatCompletionMessageToolCalls, ChatCompletionRequestAssistantMessageArgs,
+    ChatCompletionMessageToolCall, ChatCompletionMessageToolCalls, ChatCompletionRequestAssistantMessageArgs,
     ChatCompletionRequestMessage, ChatCompletionRequestToolMessageArgs,
     ChatCompletionRequestUserMessageArgs, ChatCompletionTools, CreateChatCompletionRequestArgs,
 };
+use futures_util::StreamExt;
 use futures_util::future::BoxFuture;
+use futures_util::stream::FuturesOrdered;
 use serde_json::Value;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -141,75 +143,35 @@ async fn chat_with_tools(
         }
 
         if !tool_calls.is_empty() {
+            let mut calls = Vec::with_capacity(tool_calls.len());
             for tool_call in tool_calls {
                 match tool_call {
-                    ChatCompletionMessageToolCalls::Function(tool) => {
-                        let name = &tool.function.name;
-                        let arguments = &tool.function.arguments;
-                        if let Some(tx) = tx {
-                            let _ = tx.send(ChatEvent::ToolCall {
-                                name: name.clone(),
-                                arguments: preview(arguments),
-                            });
-                            // 让出一次执行权，保证“正在调用工具”先送到界面，
-                            // 即使接下来的工具在同步阻塞。
-                            tokio::task::yield_now().await;
-                        }
-
-                        let outcome = if name == "create_subagents" && !allow_subagents {
-                            Err(anyhow::anyhow!("子 agent 不能再次调用 create_subagents"))
-                        } else if name == "homework"
-                            && !allow_subagents
-                            && serde_json::from_str::<Value>(arguments)
-                                .is_ok_and(|value| value["action"] == "submit")
-                        {
-                            Err(anyhow::anyhow!("子 agent 不能提交作业，请把答案交回主 agent，由主 agent 请用户确认后提交"))
-                        } else {
-                            tool_calling(name, arguments).await
-                        };
-                        let (result, ok) = match outcome {
-                            // 提交预览由系统直接发给用户，模型只拿到前半段说明，转述不了也篡改不了
-                            Ok(result) => match result.split_once(USER_NOTICE_MARK) {
-                                Some((for_model, for_user)) => {
-                                    if let Some(tx) = tx {
-                                        let _ = tx.send(ChatEvent::Answer {
-                                            text: for_user.to_string(),
-                                        });
-                                    }
-                                    (for_model.to_string(), true)
-                                }
-                                None => (result, true),
-                            },
-                            Err(err) => {
-                                eprintln!("工具 {name} 执行失败: {err:#}");
-                                (format!("工具执行失败: {err:#}"), false)
-                            }
-                        };
-
-                        if let Some(tx) = tx {
-                            let _ = tx.send(ChatEvent::ToolResult {
-                                name: name.clone(),
-                                ok,
-                                preview: preview(&result),
-                            });
-                        }
-
-                        // println!("工具名称：{name}");
-                        // println!("工具参数：{arguments}");
-                        // println!("执行结果：{result}");
-
-                        // tool 消息必须带上对应的 tool_call_id。
-                        messages.push(
-                            ChatCompletionRequestToolMessageArgs::default()
-                                .content(result)
-                                .tool_call_id(tool.id)
-                                .build()?
-                                .into(),
-                        );
-                    }
+                    ChatCompletionMessageToolCalls::Function(tool) => calls.push(tool),
                     ChatCompletionMessageToolCalls::Custom(_) => {
                         return Err(anyhow::anyhow!("暂不支持 custom tool"));
                     }
+                }
+            }
+
+            if runs_in_parallel(&calls) {
+                // 只读查询互不依赖，同时执行；结果仍按调用顺序写回上下文和界面。
+                for call in &calls {
+                    announce(tx, call).await;
+                }
+                let mut running: FuturesOrdered<_> = calls
+                    .iter()
+                    .map(|call| run_tool(&call.function.name, &call.function.arguments, allow_subagents))
+                    .collect();
+                let mut finished = calls.iter();
+                while let Some(outcome) = running.next().await {
+                    let call = finished.next().expect("每个结果对应一次调用");
+                    record(messages, tx, call, outcome)?;
+                }
+            } else {
+                for call in &calls {
+                    announce(tx, call).await;
+                    let outcome = run_tool(&call.function.name, &call.function.arguments, allow_subagents).await;
+                    record(messages, tx, call, outcome)?;
                 }
             }
 
@@ -221,6 +183,106 @@ async fn chat_with_tools(
     }
 
     Err(anyhow::anyhow!("ReAct 超过最大步数"))
+}
+
+/// 可以和同一轮其他调用并发执行的工具：只读、无副作用、不打开可见窗口。
+/// bash、write、edit、作业提交、子 agent、展示网页等仍按顺序执行。
+const PARALLEL_SAFE: &[&str] = &[
+    "get_time_stamp",
+    "get_courses",
+    "get_exam",
+    "get_deadlines",
+    "get_announcements",
+    "get_grades",
+    "daily_brief",
+    "library_status",
+    "find_classroom",
+    "class_schedule",
+    "exam_schedule",
+    "score_report",
+    "get_hotnews",
+    "shuiyuan_search",
+    "shuiyuan_topic",
+    "pdf_analysis",
+    "read",
+    "mail_fetch",
+];
+
+fn runs_in_parallel(calls: &[ChatCompletionMessageToolCall]) -> bool {
+    calls.len() > 1
+        && calls
+            .iter()
+            .all(|call| PARALLEL_SAFE.contains(&call.function.name.as_str()))
+}
+
+async fn announce(tx: Option<&UnboundedSender<ChatEvent>>, call: &ChatCompletionMessageToolCall) {
+    if let Some(tx) = tx {
+        let _ = tx.send(ChatEvent::ToolCall {
+            name: call.function.name.clone(),
+            arguments: preview(&call.function.arguments),
+        });
+        // 让出一次执行权，保证“正在调用工具”先送到界面，即使接下来的工具在同步阻塞。
+        tokio::task::yield_now().await;
+    }
+}
+
+async fn run_tool(name: &str, arguments: &str, allow_subagents: bool) -> anyhow::Result<String> {
+    if name == "create_subagents" && !allow_subagents {
+        return Err(anyhow::anyhow!("子 agent 不能再次调用 create_subagents"));
+    }
+    if name == "homework"
+        && !allow_subagents
+        && serde_json::from_str::<Value>(arguments).is_ok_and(|value| value["action"] == "submit")
+    {
+        return Err(anyhow::anyhow!(
+            "子 agent 不能提交作业，请把答案交回主 agent，由主 agent 请用户确认后提交"
+        ));
+    }
+    tool_calling(name, arguments).await
+}
+
+/// 把一次工具调用的结果写回上下文并通知界面。
+fn record(
+    messages: &mut Vec<ChatCompletionRequestMessage>,
+    tx: Option<&UnboundedSender<ChatEvent>>,
+    call: &ChatCompletionMessageToolCall,
+    outcome: anyhow::Result<String>,
+) -> anyhow::Result<()> {
+    let name = &call.function.name;
+    let (result, ok) = match outcome {
+        // 提交预览由系统直接发给用户，模型只拿到前半段说明，转述不了也篡改不了
+        Ok(result) => match result.split_once(USER_NOTICE_MARK) {
+            Some((for_model, for_user)) => {
+                if let Some(tx) = tx {
+                    let _ = tx.send(ChatEvent::Answer {
+                        text: for_user.to_string(),
+                    });
+                }
+                (for_model.to_string(), true)
+            }
+            None => (result, true),
+        },
+        Err(err) => {
+            eprintln!("工具 {name} 执行失败: {err:#}");
+            (format!("工具执行失败: {err:#}"), false)
+        }
+    };
+    if let Some(tx) = tx {
+        let _ = tx.send(ChatEvent::ToolResult {
+            name: name.clone(),
+            ok,
+            preview: preview(&result),
+        });
+    }
+    // tool 消息必须带上对应的 tool_call_id。
+    messages.push(
+        ChatCompletionRequestToolMessageArgs::default()
+            .content(result)
+            .tool_call_id(call.id.clone())
+            .build()?
+            .into(),
+    );
+    Ok(())
 }
 
 pub async fn tool_calling(name: &str, arguments_json: &str) -> anyhow::Result<String> {
