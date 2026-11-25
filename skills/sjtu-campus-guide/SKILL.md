@@ -35,7 +35,8 @@ description: 交大校园常识速查：常用系统入口与用途、校历与�
 - 平时作业分数、老师评语：get_grades（Canvas）
 - 作业截止：跨课程用 get_deadlines，单门课细节用 get_exam
 - 课程公告：get_announcements
-- 课件资料：course_files（list 后 download，再用 pdf_analysis 读）
+- 课件资料：course_files（list 后 download，PDF 用 pdf_analysis 读，pptx/docx/xlsx 用 read_office 读）
+- 把课表、考试、作业截止导入手机日历：export_calendar
 - 写作业、交作业：homework（先 questions 取题，提交前遵守确认规则）
 - 找自习教室：find_classroom；图书馆人多不多：library_status
 - 选课评价、老师口碑、校园经验：shuiyuan_search，再用 shuiyuan_topic 读帖子

@@ -14,8 +14,9 @@ description: 课件精读与笔记整理：用户想读懂某一讲/某一章课
 
 ## 2. 阅读
 
-- pdf_analysis 先不带页码读一遍，拿到各页开头作为目录
-- 按章节分段读（每次 5–10 页），不要一次读完长文档
+- PDF 用 pdf_analysis；PowerPoint、Word、Excel（.pptx/.docx/.xlsx）用 read_office，幻灯片的讲者备注里常有老师补充的要点，不要漏掉
+- 先不带页码读一遍，拿到各页开头作为目录
+- 按章节分段读（每次 5–10 页，用 start_page/end_page 或 start/end），不要一次读完长文档
 - 扫描版 PDF 没有文字时，如实告诉用户需要 OCR，可让用户提供文字版
 
 ## 3. 整理笔记的结构
