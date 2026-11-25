@@ -197,6 +197,12 @@ async fn handle_socket(mut socket: WebSocket, store: Arc<Store>, id: Option<Stri
                     match store.get(id).await {
                         Ok(next) => {
                             let guard = next.lock().await;
+                            if guard.deleted {
+                                drop(guard);
+                                let payload = serde_json::json!({"type":"session_error", "session_id":id, "text":"会话已删除"});
+                                if socket.send(Message::Text(payload.to_string().into())).await.is_err() { break; }
+                                continue;
+                            }
                             session_events = guard.tx.subscribe();
                             let payload = guard.snapshot();
                             drop(guard);

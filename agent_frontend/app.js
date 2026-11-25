@@ -436,7 +436,25 @@ function selectSession(id) {
   } else if (!socket || socket.readyState !== WebSocket.CONNECTING) connect();
 }
 
+function forgetSession(id) {
+  sessions.delete(id);
+  if (selectedId !== id) return;
+  selectedId = readyId = null;
+  clearTimeout(handshakeTimer);
+  inputEl.value = "";
+  renderSession({ title: "", events: [], scroll: null });
+  resizeInput();
+  setStatus("正在切换对话", false);
+  toast("这条对话已删除");
+}
+
 function receive(payload) {
+  if (payload.type === "session_deleted") {
+    forgetSession(payload.session_id);
+    renderSessionList();
+    refreshSessions();
+    return;
+  }
   if (payload.type === "session_error") {
     if (!payload.session_id || payload.session_id === selectedId) {
       readyId = null; setStatus("会话加载失败", false);
@@ -510,9 +528,16 @@ async function api(path, options) {
 async function refreshSessions(showError = false) {
   if (refreshing) return;
   refreshing = true;
+  const knownIds = new Set(sessions.keys());
   try {
     const list = await api("/api/sessions");
+    const listedIds = new Set(list.map(summary => summary.id));
+    for (const id of knownIds) {
+      if (!listedIds.has(id)) forgetSession(id);
+    }
     for (const summary of list) {
+      // A deletion may arrive over WebSocket while this older list is in flight.
+      if (knownIds.has(summary.id) && !sessions.has(summary.id)) continue;
       const previous = sessions.get(summary.id);
       const changed = previous && summary.revision > previous.revision;
       const session = upsert(summary);
@@ -522,7 +547,8 @@ async function refreshSessions(showError = false) {
     if (!selectedId) {
       let saved;
       try { saved = localStorage.getItem("jisjtu.active-session"); } catch { /* optional */ }
-      if (list.length) selectSession(sessions.has(saved) ? saved : list[0].id);
+      const next = sessions.has(saved) ? saved : list.find(summary => sessions.has(summary.id))?.id;
+      if (next) selectSession(next);
       else await createSession();
     }
   } catch (error) {
