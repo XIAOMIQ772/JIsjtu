@@ -129,3 +129,40 @@ fn parse(text: &str, fallback_name: &str) -> (String, String) {
 }
 
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundled_skills_have_names_and_descriptions() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../skills");
+        let skills = load(&dir);
+        for name in [
+            "sjtu-campus-guide",
+            "course-selection-research",
+            "exam-review-plan",
+            "weekly-study-plan",
+            "email-to-teacher",
+            "lecture-notes",
+        ] {
+            let skill = skills
+                .iter()
+                .find(|skill| skill.name == name)
+                .unwrap_or_else(|| panic!("缺少内置技能 {name}"));
+            assert!(skill.description.chars().count() > 20, "{name} 的描述太短");
+            assert!(skill.path.ends_with(format!("{name}/SKILL.md")));
+        }
+        let section = render(&skills);
+        assert!(section.contains("sjtu-campus-guide：交大校园常识速查"));
+    }
+
+    #[test]
+    fn front_matter_falls_back_to_directory_and_first_line() {
+        assert_eq!(
+            parse("---\nname: x\ndescription: \"带引号\"\n---\n正文", "dir"),
+            ("x".to_string(), "带引号".to_string())
+        );
+        assert_eq!(parse("# 标题\n正文", "dir"), ("dir".to_string(), "标题".to_string()));
+    }
+}
