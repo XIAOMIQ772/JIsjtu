@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use super::canvas::next_link;
 use super::clip;
 
 const FILES_MAX_PAGES: usize = 10;
@@ -81,22 +82,6 @@ impl CanvasFile {
 
 fn page_url(base: &str, path: &str, page: usize) -> String {
     format!("{base}{path}?per_page=100&page={page}")
-}
-
-fn next_link(header: &str) -> Option<String> {
-    header.split(',').find_map(|part| {
-        let mut segments = part.split(';');
-        let url = segments.next()?.trim();
-        if segments.any(|s| s.trim() == "rel=\"next\"") {
-            Some(
-                url.trim_start_matches('<')
-                    .trim_end_matches('>')
-                    .to_string(),
-            )
-        } else {
-            None
-        }
-    })
 }
 
 async fn fetch_course_files(

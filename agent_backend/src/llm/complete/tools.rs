@@ -134,17 +134,22 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
         function: (FunctionObject {
             name: "get_exam".to_string(),
             description: Some(
-                "当用户给出课程名字时,先去查课程id,然后查询课程对应的作业描述,展示课程的名称,截止时间,分值,内容".to_string(),
+                "查询某门课程在 Canvas 上的全部作业：截止时间（北京时间，附剩余时间）、自己的提交/批改状态、分值、提交方式和说明摘要，\
+                 按未截止、无截止时间、已截止分组。用户只给课程名时先用 get_courses 查课程 id。只关心还没交的作业时传 pending_only=true。".to_string(),
             ),
             parameters: Some(json!({
                 "type":"object",
                 "properties":{
                     "course_id":{
                         "type":"string",
-                        "description":"课程id,每门课程id独一无二"
+                        "description":"课程 id（数字），可由 get_courses 获取"
+                    },
+                    "pending_only":{
+                        "type":["boolean","null"],
+                        "description":"true 只列出还需要提交的作业；null 或 false 列出全部"
                     }
                 },
-                "required":["course_id"],
+                "required":["course_id","pending_only"],
                 "additionalProperties":false
             })),
             strict: Some(true),

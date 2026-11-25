@@ -2,6 +2,7 @@
 
 mod bash;
 mod campus_time;
+mod canvas;
 mod course_files;
 mod create_subagents;
 mod edit;
@@ -14,6 +15,7 @@ mod mail_fetch;
 mod open_usual_website;
 mod pdf_analysis;
 mod read;
+mod text;
 mod watch_eduinfo;
 mod watch_shuiyuan;
 mod write;
