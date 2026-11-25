@@ -189,7 +189,8 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
         function: (FunctionObject {
             name: "get_time_stamp".to_string(),
             description: Some(
-                "获取当前系统时间".to_string(),
+                "获取当前北京时间、星期、交大校历的教学周（是否考试周、节假日）以及当前处于第几节课。\
+                 涉及“今天/明天/本周/第几周/还有几天”的问题先调用它。".to_string(),
             ),
             parameters: Some(json!({
                 "type":"object",

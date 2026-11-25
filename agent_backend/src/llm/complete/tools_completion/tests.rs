@@ -409,11 +409,9 @@ async fn subagents_run_concurrently_with_isolated_contexts_tools_and_partial_fai
         .collect();
     assert_eq!(tool_results.len(), 3);
     assert_eq!(tool_results[0]["tool_call_id"], "time-call");
-    chrono::NaiveDateTime::parse_from_str(
-        tool_results[0]["content"].as_str().unwrap(),
-        "%Y-%m-%d %H:%M:%S",
-    )
-    .unwrap();
+    let time = tool_results[0]["content"].as_str().unwrap();
+    let stamp = time.strip_prefix("北京时间 ").and_then(|rest| rest.get(..19)).unwrap();
+    chrono::NaiveDateTime::parse_from_str(stamp, "%Y-%m-%d %H:%M:%S").unwrap();
     assert_eq!(tool_results[1]["tool_call_id"], "invalid-call");
     assert!(
         tool_results[1]["content"]

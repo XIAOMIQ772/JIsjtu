@@ -1,6 +1,7 @@
 //! 工具实现：每个工具一个子模块，这里只负责按名字分发和少量共用的辅助函数。
 
 mod bash;
+mod campus_time;
 mod course_files;
 mod create_subagents;
 mod edit;

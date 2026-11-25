@@ -1,4 +1,5 @@
-pub(super) async fn get_time_stamp(_: serde_json::Value)->Result<String,String>{
-    let now: String = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    Ok(now)
+use super::campus_time;
+
+pub(super) async fn get_time_stamp(_: serde_json::Value) -> Result<String, String> {
+    Ok(campus_time::describe_now(campus_time::now()))
 }

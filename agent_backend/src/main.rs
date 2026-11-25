@@ -32,6 +32,26 @@ async fn main() {
         eprintln!("提示：未加载 .env（{error}），将继续使用进程环境变量");
     }
 
+    // 调试入口：不经过模型直接调用某个工具，例如
+    // JIsjtu --tool get_time_stamp
+    // JIsjtu --tool get_exam '{"course_id":"12345"}'
+    let arguments: Vec<String> = std::env::args().collect();
+    if let Some(index) = arguments.iter().position(|argument| argument == "--tool") {
+        let Some(name) = arguments.get(index + 1) else {
+            eprintln!("用法：--tool <工具名> ['<JSON 参数>']");
+            std::process::exit(2);
+        };
+        let input = arguments.get(index + 2).map(String::as_str).unwrap_or("{}");
+        match llm::complete::tool_calling(name, input).await {
+            Ok(output) => println!("{output}"),
+            Err(error) => {
+                eprintln!("{error:#}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
     if std::env::args().any(|argument| argument == "--sso-login") {
         match sso::login(serde_json::json!({})).await {
             Ok(message) => println!("{message}"),
