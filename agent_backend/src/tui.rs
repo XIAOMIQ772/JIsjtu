@@ -570,9 +570,10 @@ impl App {
             return None;
         }
         Some(match self.events.last() {
-            Some(ChatEvent::ToolCall { name }) => {
-                format!("小集正在调用工具 {}", display_text(name).replace('\n', " "))
-            }
+            Some(ChatEvent::ToolCall { name }) => match tool_label(name) {
+                Some(label) => format!("小集正在{label}"),
+                None => format!("小集正在调用工具 {}", display_text(name).replace('\n', " ")),
+            },
             Some(ChatEvent::AnswerDelta { .. }) => "小集正在回答".into(),
             _ => "小集正在思考".into(),
         })
@@ -1727,7 +1728,10 @@ fn history_text(events: &[ChatEvent], width: u16) -> Text<'static> {
             ChatEvent::ToolCall { name } => (
                 "· ",
                 MUTED,
-                vec![Line::styled(display_text(name), Style::default().fg(MUTED))],
+                vec![Line::styled(
+                    tool_label(name).map_or_else(|| display_text(name), str::to_string),
+                    Style::default().fg(MUTED),
+                )],
             ),
             ChatEvent::Error { text } => (
                 "! ",
@@ -1761,6 +1765,41 @@ fn history_text(events: &[ChatEvent], width: u16) -> Text<'static> {
         previous_was_tool = is_tool;
     }
     Text::from(lines)
+}
+
+/// 工具在界面上的名字（动宾短语，接在“小集正在”后面），与网页端 app.js 的 toolNames 保持一致。
+fn tool_label(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "sso_login" => "检查登录状态",
+        "bash" => "执行任务",
+        "read" => "读取文件",
+        "write" => "写入文件",
+        "edit" => "编辑文件",
+        "get_courses" => "查看课程",
+        "get_exam" => "查询作业",
+        "get_deadlines" => "汇总截止事项",
+        "get_announcements" => "查看课程公告",
+        "get_grades" => "查询作业成绩",
+        "watch_shuiyuan" => "访问水源社区",
+        "get_hotnews" => "整理水源热点",
+        "shuiyuan_search" => "搜索水源",
+        "shuiyuan_topic" => "阅读水源帖子",
+        "get_time_stamp" => "获取当前时间",
+        "daily_brief" => "整理今日简报",
+        "pdf_analysis" => "阅读 PDF",
+        "course_files" => "查找课程资料",
+        "homework" => "处理作业",
+        "watch_eduinfo" => "访问教学信息网",
+        "class_schedule" => "查看课表",
+        "exam_schedule" => "查询考试安排",
+        "score_report" => "查询成绩与绩点",
+        "find_classroom" => "寻找空教室",
+        "library_status" => "查看图书馆人数",
+        "open_usual_website" => "访问网页",
+        "mail_fetch" => "读取校园邮件",
+        "create_subagents" => "分派子任务",
+        _ => return None,
+    })
 }
 
 // 只渲染常见的 Markdown 子集：标题、列表、引用、代码块、粗体、斜体、行内代码、链接。
@@ -2679,9 +2718,22 @@ mod tests {
         }))
         .unwrap();
         let rendered = history_text(&[call, result], 80).to_string();
-        assert!(rendered.contains("read"));
+        assert!(rendered.contains("读取文件"));
         assert!(!rendered.contains("secret"));
         assert!(!rendered.contains("完成"));
+    }
+
+    #[test]
+    fn every_tool_has_a_friendly_label_in_the_tui_and_the_web_page() {
+        let web = include_str!("../../agent_frontend/app.js");
+        let tools = serde_json::to_value(crate::llm::complete::tools::get_tools()).unwrap();
+        for tool in tools.as_array().unwrap() {
+            let name = tool["function"]["name"].as_str().unwrap();
+            let label = tool_label(name).unwrap_or_else(|| panic!("TUI 缺少工具 {name} 的名称"));
+            assert!(web.contains(&format!("{name}: \"{label}\"")), "app.js 的 toolNames 缺少或不一致：{name}");
+        }
+        let unknown: ChatEvent = serde_json::from_value(json!({"type": "tool_call", "name": "future_tool"})).unwrap();
+        assert!(history_text(&[unknown], 80).to_string().contains("future_tool"));
     }
 
     #[test]
@@ -2744,7 +2796,7 @@ mod tests {
         assert_eq!(app.activity().as_deref(), Some("小集正在思考"));
         assert!(app.working_since.is_some());
         step(&mut app, 3, true, ChatEvent::ToolCall { name: "get_courses".into() });
-        assert_eq!(app.activity().as_deref(), Some("小集正在调用工具 get_courses"));
+        assert_eq!(app.activity().as_deref(), Some("小集正在查看课程"));
 
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
@@ -2756,7 +2808,7 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect();
         let compact: String = rendered.split_whitespace().collect();
-        assert!(compact.contains("小集正在调用工具get_courses…"), "{rendered}");
+        assert!(compact.contains("小集正在查看课程…"), "{rendered}");
         assert!(compact.contains("工作中"), "{rendered}");
 
         step(&mut app, 4, true, ChatEvent::ToolResult);

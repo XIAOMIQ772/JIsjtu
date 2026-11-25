@@ -38,8 +38,9 @@
     </section>
     <div class="sidebar-section-label shortcuts-label">校园随行</div>
     <nav class="shortcuts" aria-label="快捷提问">
-      <button class="nav-item" type="button" data-prompt="帮我查看这学期正在进行的课程。"><svg class="icon"><use href="#i-book"/></svg><span>我的课程</span><span class="nav-arrow">↗</span></button>
-      <button class="nav-item" type="button" data-prompt="帮我查看各门课程的作业，按截止时间整理。"><svg class="icon"><use href="#i-check"/></svg><span>作业与待办</span><span class="nav-arrow">↗</span></button>
+      <button class="nav-item" type="button" data-prompt="帮我看看今天的安排：课程、作业截止、考试和新通知。"><svg class="icon"><use href="#i-sun"/></svg><span>今日安排</span><span class="nav-arrow">↗</span></button>
+      <button class="nav-item" type="button" data-prompt="帮我汇总最近两周所有课程的作业截止，按时间排好，标出还没交的。"><svg class="icon"><use href="#i-check"/></svg><span>作业与 DDL</span><span class="nav-arrow">↗</span></button>
+      <button class="nav-item" type="button" data-prompt="帮我看看这周的课表。"><svg class="icon"><use href="#i-book"/></svg><span>我的课表</span><span class="nav-arrow">↗</span></button>
       <button class="nav-item" type="button" data-prompt="我想查找课程的讲义和课件，请先列出我的课程。"><svg class="icon"><use href="#i-file"/></svg><span>课程资料</span><span class="nav-arrow">↗</span></button>
       <button class="nav-item" type="button" data-prompt="帮我查看学校邮箱里最近的 10 封邮件。"><svg class="icon"><use href="#i-mail"/></svg><span>校园邮箱</span><span class="nav-arrow">↗</span></button>
     </nav>
@@ -86,12 +87,12 @@
 
         <div class="section-heading"><h2>从这里，开启一页</h2><span>小集可以帮你</span></div>
         <div class="prompt-grid">
-          <button class="prompt-card" type="button" data-prompt="帮我查看这学期正在进行的课程。"><span class="card-icon sage"><svg class="icon"><use href="#i-book"/></svg></span><span class="card-copy"><strong>这学期，学些什么？</strong><small>查看正在进行的课程</small></span><svg class="icon card-arrow"><use href="#i-arrow"/></svg></button>
-          <button class="prompt-card" type="button" data-prompt="帮我查看各门课程的作业，按截止时间整理。"><span class="card-icon ochre"><svg class="icon"><use href="#i-check"/></svg></span><span class="card-copy"><strong>最近有什么作业？</strong><small>梳理作业内容与截止时间</small></span><svg class="icon card-arrow"><use href="#i-arrow"/></svg></button>
+          <button class="prompt-card" type="button" data-prompt="帮我看看今天的安排：课程、作业截止、考试和新通知。"><span class="card-icon sage"><svg class="icon"><use href="#i-sun"/></svg></span><span class="card-copy"><strong>今天有什么安排？</strong><small>课程、DDL、考试与新通知</small></span><svg class="icon card-arrow"><use href="#i-arrow"/></svg></button>
+          <button class="prompt-card" type="button" data-prompt="帮我汇总最近两周所有课程的作业截止，按时间排好，标出还没交的。"><span class="card-icon ochre"><svg class="icon"><use href="#i-check"/></svg></span><span class="card-copy"><strong>最近有什么作业？</strong><small>跨课程汇总截止时间</small></span><svg class="icon card-arrow"><use href="#i-arrow"/></svg></button>
           <button class="prompt-card" type="button" data-prompt="我想查找课程的讲义和课件，请先列出我的课程。"><span class="card-icon clay"><svg class="icon"><use href="#i-file"/></svg></span><span class="card-copy"><strong>帮我找一份课件</strong><small>查找课程讲义与学习资料</small></span><svg class="icon card-arrow"><use href="#i-arrow"/></svg></button>
           <button class="prompt-card" type="button" data-prompt="我想阅读一份 PDF，请提示我提供文件的本地绝对路径，再帮我梳理重点。"><span class="card-icon olive"><svg class="icon"><use href="#i-spark"/></svg></span><span class="card-copy"><strong>一起读懂这份资料</strong><small>阅读 PDF，梳理知识与思路</small></span><svg class="icon card-arrow"><use href="#i-arrow"/></svg></button>
         </div>
-        <div class="more-prompts"><span>也可以试试</span><button type="button" data-prompt="帮我查看学校邮箱里最近的 10 封邮件。">查看校园邮件 <span>↗</span></button><button type="button" data-prompt="帮我打开水源社区。">逛逛水源社区 <span>↗</span></button></div>
+        <div class="more-prompts"><span>也可以试试</span><button type="button" data-prompt="帮我找现在能自习的空教室，再看看图书馆人多不多。">找个地方自习 <span>↗</span></button><button type="button" data-prompt="帮我看看各学期的成绩和 GPA。">成绩与 GPA <span>↗</span></button><button type="button" data-prompt="这学期的考试都安排在什么时候？">考试安排 <span>↗</span></button><button type="button" data-prompt="我想在水源上看看一门课的评价，先问我是哪门课。">水源选课评价 <span>↗</span></button><button type="button" data-prompt="帮我查看学校邮箱里最近的 10 封邮件。">查看校园邮件 <span>↗</span></button></div>
       </section>
       <section class="conversation" id="messages" role="log" aria-label="与小集的对话" aria-live="polite" aria-relevant="additions text" hidden></section>
     </div>
@@ -108,6 +109,6 @@
     <div class="connection-notice" id="connection-notice" role="status" hidden><span id="connection-notice-text"></span><button id="retry-connection" type="button">重新连接</button></div>
     <div class="toast" id="toast" role="status" hidden></div>
   </main>
-  <script src="/app.js?v=streaming-20261007"></script>
+  <script src="/app.js?v=campus-20261125"></script>
 </body>
 </html>
