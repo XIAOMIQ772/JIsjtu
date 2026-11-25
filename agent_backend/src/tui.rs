@@ -51,6 +51,8 @@ enum SlashCommand {
     Resume,
     Help,
     Quit,
+    /// 常用请求的快捷方式：把这句话当作用户消息发给小集
+    Ask(&'static str),
 }
 
 struct CommandSpec {
@@ -60,7 +62,25 @@ struct CommandSpec {
     description: &'static str,
 }
 
-const COMMANDS: [CommandSpec; 4] = [
+const COMMANDS: [CommandSpec; 7] = [
+    CommandSpec {
+        command: SlashCommand::Ask("帮我看看今天的安排：课程、作业截止、考试和新通知。"),
+        name: "today",
+        aliases: &["brief"],
+        description: "今日简报：课程、DDL、考试、公告、邮件",
+    },
+    CommandSpec {
+        command: SlashCommand::Ask("帮我汇总最近两周所有课程的作业截止，按时间排好，标出还没交的。"),
+        name: "ddl",
+        aliases: &[],
+        description: "近两周所有课程的作业截止",
+    },
+    CommandSpec {
+        command: SlashCommand::Ask("帮我看看这周的课表。"),
+        name: "week",
+        aliases: &["schedule"],
+        description: "本周课表",
+    },
     CommandSpec {
         command: SlashCommand::New,
         name: "new",
@@ -1021,7 +1041,7 @@ fn handle_command_popup_key(
         }
         KeyCode::Esc => app.clear_input(),
         KeyCode::Enter => {
-            run_command(app, matches[selected].command, outgoing, http_requests);
+            run_command(app, matches[selected].command, outgoing, http_requests)?;
         }
         _ => return Ok(false),
     }
@@ -1031,10 +1051,17 @@ fn handle_command_popup_key(
 fn run_command(
     app: &mut App,
     command: SlashCommand,
-    _outgoing: &mpsc::UnboundedSender<Message>,
+    outgoing: &mpsc::UnboundedSender<Message>,
     http_requests: &HttpRequests,
-) {
+) -> anyhow::Result<()> {
     match command {
+        SlashCommand::Ask(prompt) => {
+            // 正忙时这句话留在输入框里，等空闲后按 Enter 再发
+            app.input = prompt.to_string();
+            app.cursor = app.input.chars().count();
+            app.command_selection = 0;
+            return submit(app, outgoing);
+        }
         SlashCommand::Quit => app.should_quit = true,
         SlashCommand::Help => {
             app.clear_input();
@@ -1043,7 +1070,7 @@ fn run_command(
         SlashCommand::Resume => {
             if !app.can_switch_session() {
                 app.status = "连接尚未就绪，请稍后再试".into();
-                return;
+                return Ok(());
             }
             app.clear_input();
             app.request_sessions(http_requests);
@@ -1051,22 +1078,23 @@ fn run_command(
         SlashCommand::New => {
             if !app.can_switch_session() {
                 app.status = "连接尚未就绪，请稍后再试".into();
-                return;
+                return Ok(());
             }
             if app.events.is_empty() && !app.is_busy() {
                 app.clear_input();
                 app.status = "当前已经是新会话".into();
-                return;
+                return Ok(());
             }
             if http_requests.send(HttpRequest::New).is_err() {
                 app.status = "会话连接已关闭".into();
-                return;
+                return Ok(());
             }
             app.clear_input();
             app.creating = true;
             app.status = app.default_status().into();
         }
     }
+    Ok(())
 }
 
 // 滚轮：聊天里滚动历史，会话列表里移动选中项。
@@ -1173,16 +1201,18 @@ fn send_input(
 ) -> anyhow::Result<()> {
     // Local commands remain available while the model is streaming.
     match parse_command(&app.input) {
-        Some(Ok(command)) => {
-            run_command(app, command, outgoing, http_requests);
-            return Ok(());
-        }
+        Some(Ok(command)) => return run_command(app, command, outgoing, http_requests),
         Some(Err(name)) => {
             app.status = format!("未知命令 /{name}，输入 /help 查看可用命令");
             return Ok(());
         }
         None => {}
     }
+    submit(app, outgoing)
+}
+
+/// 把输入框里的内容作为用户消息发出。
+fn submit(app: &mut App, outgoing: &mpsc::UnboundedSender<Message>) -> anyhow::Result<()> {
     if !app.can_send() {
         app.status = if app.input.trim().is_empty() {
             "请先输入消息".into()
@@ -2353,6 +2383,33 @@ mod tests {
             assert!(!compact.contains("聊天内容不应出现在选择界面"));
             assert!(app.picker.as_ref().unwrap().selection.offset() > 0);
         }
+    }
+
+    #[test]
+    fn shortcut_commands_send_their_prompt_or_wait_in_the_input_box() {
+        let mut app = ready_app(1, false);
+        let (outgoing, mut messages) = mpsc::unbounded_channel();
+        let (requests, _) = mpsc::unbounded_channel::<HttpRequest>();
+        for character in "/today".chars() {
+            app.insert(character);
+        }
+        let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+        handle_key(&mut app, key(KeyCode::Enter), &outgoing, &requests).unwrap();
+        let Message::Text(payload) = messages.try_recv().unwrap() else { panic!("应发送文本消息") };
+        let payload: serde_json::Value = serde_json::from_str(payload.as_str()).unwrap();
+        assert_eq!(payload["type"], "user");
+        assert!(payload["text"].as_str().unwrap().contains("今天的安排"));
+        assert!(app.sending);
+
+        // 小集正忙：快捷请求先放进输入框，不发送
+        let mut busy = ready_app(1, true);
+        for character in "/ddl".chars() {
+            busy.insert(character);
+        }
+        send_input(&mut busy, &outgoing, &requests).unwrap();
+        assert!(messages.try_recv().is_err());
+        assert!(busy.input.contains("作业截止"));
+        assert_eq!(command_matches("/bri")[0].name, "today");
     }
 
     #[test]

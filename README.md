@@ -34,7 +34,7 @@ vim ~/.local/share/JIsjtu/.env
 JIsjtu
 ```
 
-`JIsjtu` 默认启动 TUI，可输入 `/sessions` 切换会话。运行 `JIsjtu --web` 或 `JIsjtu web` 才会打开网页，默认地址为 `http://127.0.0.1:13376`。终端需保持运行，按 `Ctrl+C` 停止。`JIsjtu --config` 可查看配置路径，`JIsjtu --tui` 显式使用终端界面，`JIsjtu --sso-login` 单独检查登录。配置修改或升级后需重启。
+`JIsjtu` 默认启动 TUI，可输入 `/sessions` 切换会话，`/today` 看今日简报、`/ddl` 汇总作业截止、`/week` 看本周课表（输入 `/` 可打开命令面板）。运行 `JIsjtu --web` 或 `JIsjtu web` 才会打开网页，默认地址为 `http://127.0.0.1:13376`。终端需保持运行，按 `Ctrl+C` 停止。`JIsjtu --config` 可查看配置路径，`JIsjtu --tui` 显式使用终端界面，`JIsjtu --sso-login` 单独检查登录。配置修改或升级后需重启。
 
 ## 配置
 
