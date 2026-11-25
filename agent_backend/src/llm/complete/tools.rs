@@ -215,6 +215,17 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
     }),
     ChatCompletionTools::Function(ChatCompletionTool {
         function: (FunctionObject {
+            name: "library_status".to_string(),
+            description: Some(
+                "查询交大各图书馆（主馆、李政道图书馆、包玉刚图书馆、徐汇社科馆）的实时在馆人数和容量占比，\
+                 用户问“图书馆人多吗”“去哪个馆自习”时使用。无需登录。".to_string(),
+            ),
+            parameters: Some(json!({"type":"object","properties":{},"required":[],"additionalProperties":false})),
+            strict: Some(true),
+        }),
+    }),
+    ChatCompletionTools::Function(ChatCompletionTool {
+        function: (FunctionObject {
             name: "watch_shuiyuan".to_string(),
             description: Some(
                 "打开水源社区，复用 jAccount 登录状态。默认 show：打开可见网页并保留给用户。只有用户让助手查询、阅读、提取或总结网页内容时，才明确传 read，在后台读取后自动关闭临时页面。".to_string(),

@@ -14,6 +14,7 @@ mod get_grades;
 mod get_hotnews;
 mod get_time_stamp;
 mod homework;
+mod library_status;
 mod mail_fetch;
 mod open_usual_website;
 mod pdf_analysis;
@@ -40,6 +41,7 @@ pub async fn call(name: &str, arguments: serde_json::Value) -> Result<String, St
         "get_deadlines"=>get_deadlines::get_deadlines(arguments).await,
         "get_announcements"=>get_announcements::get_announcements(arguments).await,
         "get_grades"=>get_grades::get_grades(arguments).await,
+        "library_status"=>library_status::library_status(arguments).await,
         "get_hotnews"=>get_hotnews::get_hotnews(arguments).await,
         "watch_shuiyuan"=>watch_shuiyuan::watch_shuiyuan(arguments).await,
         "pdf_analysis"=>pdf_analysis::pdf_analysis(arguments).await,
