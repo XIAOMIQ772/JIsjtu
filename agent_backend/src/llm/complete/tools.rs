@@ -226,6 +226,30 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
     }),
     ChatCompletionTools::Function(ChatCompletionTool {
         function: (FunctionObject {
+            name: "find_classroom".to_string(),
+            description: Some(
+                "找空教室/自习室：根据学校教室系统的排课，按教学周过滤后算出各教室的空闲节次，今天还附带教室传感器的实时人数。\
+                 building 传教学楼名（上院、中院、下院、东上院、东中院、东下院、陈瑞球楼、新上院、教一楼、工程馆，可简写如“东上”），\
+                 传具体教室（如“东上院102”）时返回该教室当天的完整排课；传校区名或 null 时汇总各楼空教室数量。\
+                 不传节次时从当前节次开始，按连续空闲时长排序；同时传 start_period 和 end_period 时只返回整段都空的教室。\
+                 节次对应时间：1-2 节 08:00–09:40，3-4 节 10:00–11:40，5-6 节 12:00–13:40，7-8 节 14:00–15:40，9-10 节 16:00–17:40，11-12 节 18:00–19:40，13-14 节 20:00–21:40。".to_string(),
+            ),
+            parameters: Some(json!({
+                "type":"object",
+                "properties":{
+                    "building":{"type":["string","null"],"description":"教学楼、具体教室或校区（闵行/徐汇）；null 汇总所有楼"},
+                    "date":{"type":["string","null"],"description":"today、tomorrow 或 YYYY-MM-DD，null 表示今天"},
+                    "start_period":{"type":["integer","null"],"description":"起始节次 1–14；null 表示今天从当前节次开始、其他日期从第 1 节开始"},
+                    "end_period":{"type":["integer","null"],"description":"结束节次 1–14；给出时只返回整段空闲的教室"}
+                },
+                "required":["building","date","start_period","end_period"],
+                "additionalProperties":false
+            })),
+            strict: Some(true),
+        }),
+    }),
+    ChatCompletionTools::Function(ChatCompletionTool {
+        function: (FunctionObject {
             name: "watch_shuiyuan".to_string(),
             description: Some(
                 "打开水源社区，复用 jAccount 登录状态。默认 show：打开可见网页并保留给用户。只有用户让助手查询、阅读、提取或总结网页内容时，才明确传 read，在后台读取后自动关闭临时页面。".to_string(),
