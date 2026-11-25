@@ -7,8 +7,8 @@ const FILES_MAX_PAGES: usize = 10;
 
 #[derive(serde::Deserialize)]
 pub(super) struct CanvasFile {
-    id: u64,
-    display_name: String,
+    pub(super) id: u64,
+    pub(super) display_name: String,
     #[serde(default)]
     filename: Option<String>,
     #[serde(default, rename = "content-type")]
@@ -17,6 +17,8 @@ pub(super) struct CanvasFile {
     size: Option<u64>,
     #[serde(default)]
     url: Option<String>,
+    #[serde(default)]
+    pub(super) updated_at: Option<String>,
 }
 
 fn percent_decode(text: &str) -> String {
@@ -70,7 +72,7 @@ impl CanvasFile {
             .unwrap_or_else(|| format!("canvas-file-{}", self.id))
     }
 
-    fn human_size(&self) -> String {
+    pub(super) fn human_size(&self) -> String {
         match self.size {
             Some(size) if size >= 1024 * 1024 => format!("{:.1} MB", size as f64 / 1048576.0),
             Some(size) if size >= 1024 => format!("{:.0} KB", size as f64 / 1024.0),
@@ -84,7 +86,7 @@ fn page_url(base: &str, path: &str, page: usize) -> String {
     format!("{base}{path}?per_page=100&page={page}")
 }
 
-async fn fetch_course_files(
+pub(super) async fn fetch_course_files(
     client: &reqwest::Client,
     token: &str,
     course_id: &str,

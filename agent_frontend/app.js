@@ -21,7 +21,7 @@ const toolNames = {
   get_announcements: "查看课程公告", get_grades: "查询作业成绩",
   watch_shuiyuan: "访问水源社区", get_hotnews: "整理水源热点", shuiyuan_search: "搜索水源",
   shuiyuan_topic: "阅读水源帖子", get_time_stamp: "获取当前时间", daily_brief: "整理今日简报",
-  pdf_analysis: "阅读 PDF", read_office: "阅读 Office 文档", course_files: "查找课程资料", homework: "处理作业",
+  pdf_analysis: "阅读 PDF", read_office: "阅读 Office 文档", course_files: "查找课程资料", search_files: "搜索课程文件", homework: "处理作业",
   watch_eduinfo: "访问教学信息网", class_schedule: "查看课表", exam_schedule: "查询考试安排",
   score_report: "查询成绩与绩点", export_calendar: "导出日历", degree_progress: "查询学业完成情况", find_classroom: "寻找空教室", library_status: "查看图书馆人数",
   open_usual_website: "访问网页", mail_fetch: "读取校园邮件", create_subagents: "分派子任务",

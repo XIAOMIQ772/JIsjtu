@@ -25,6 +25,7 @@ mod office;
 mod open_usual_website;
 mod pdf_analysis;
 mod read;
+mod search_files;
 mod shuiyuan;
 mod shuiyuan_search;
 mod text;
@@ -59,6 +60,7 @@ pub async fn call(name: &str, arguments: serde_json::Value) -> Result<String, St
         "pdf_analysis"=>pdf_analysis::pdf_analysis(arguments).await,
         "read_office"=>office::read_office(arguments).await,
         "course_files"=>course_files::course_files(arguments).await,
+        "search_files"=>search_files::search_files(arguments).await,
         "watch_eduinfo"=>watch_eduinfo::watch_eduinfo(arguments).await,
         "class_schedule"=>eduinfo::class_schedule(arguments).await,
         "exam_schedule"=>eduinfo::exam_schedule(arguments).await,

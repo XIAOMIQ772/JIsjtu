@@ -404,6 +404,24 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
     }),
     ChatCompletionTools::Function(ChatCompletionTool {
         function: (FunctionObject {
+            name: "search_files".to_string(),
+            description: Some(
+                "在所有进行中课程的 Canvas 文件里按文件名搜索（空格分隔多个关键词，需全部包含），返回所属课程、大小、更新日期、\
+                 课程 id 与文件 id。用户记得文件名但不确定在哪门课时使用，找到后用 course_files 下载。".to_string(),
+            ),
+            parameters: Some(json!({
+                "type":"object",
+                "properties":{
+                    "keyword":{"type":"string","description":"文件名关键词，如“实验指导书”“期中 复习”“chapter3”"}
+                },
+                "required":["keyword"],
+                "additionalProperties":false
+            })),
+            strict: Some(true),
+        }),
+    }),
+    ChatCompletionTools::Function(ChatCompletionTool {
+        function: (FunctionObject {
             name: "course_files".to_string(),
             description: Some(
                 "查看某门课程在 Canvas 上的文件（讲义、课件、作业附件等）。\
