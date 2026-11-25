@@ -2,10 +2,9 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use super::clip;
+use super::{campus_time, clip, shuiyuan};
 
 const BASE: &str = "https://shuiyuan.sjtu.edu.cn";
-const LIST_LIMIT: usize = 600_000;
 const DEFAULT_COUNT: usize = 8;
 const MAX_COUNT: usize = 20;
 const DETAIL_COUNT: usize = 3;
@@ -129,11 +128,8 @@ fn shorten(text: &str, max_chars: usize) -> String {
     }
 }
 
-async fn fetch_json<T: serde::de::DeserializeOwned>(path: &str) -> Result<T, String> {
-    let text = crate::sso::read_page_text(&format!("{BASE}{path}"), LIST_LIMIT).await?;
-    serde_json::from_str(&text).map_err(|_| {
-        "水源返回的不是有效 JSON，可能尚未登录，请先调用 sso_login 后重试".to_string()
-    })
+fn parse<T: serde::de::DeserializeOwned>(value: Result<serde_json::Value, String>) -> Result<T, String> {
+    serde_json::from_value(value?).map_err(|err| format!("水源数据格式变化: {err}"))
 }
 
 fn requested_count(arguments: &serde_json::Value) -> Result<usize, String> {
@@ -152,9 +148,10 @@ fn requested_count(arguments: &serde_json::Value) -> Result<usize, String> {
 pub(super) async fn get_hotnews(arguments: serde_json::Value) -> Result<String, String> {
     let count = requested_count(&arguments)?;
 
-    let latest: TopicList = fetch_json("/latest.json").await?;
-    // 周榜失败不影响主流程，只用最新帖子计算热度。
-    let top: Option<TopicList> = fetch_json("/top.json?period=weekly").await.ok();
+    // 最新帖与周榜在同一个后台页面里请求；周榜失败不影响主流程，只用最新帖子计算热度。
+    let mut lists = shuiyuan::fetch_json_many(&["/latest.json".into(), "/top.json?period=weekly".into()]).await?;
+    let top: Option<TopicList> = parse(lists.pop().expect("两个请求")).ok();
+    let latest: TopicList = parse(lists.pop().expect("两个请求"))?;
 
     let mut names: HashMap<u64, String> = HashMap::new();
     let mut topics: HashMap<u64, Topic> = HashMap::new();
@@ -176,11 +173,24 @@ pub(super) async fn get_hotnews(arguments: serde_json::Value) -> Result<String, 
         .map(|topic| (hot_score(&topic, now), topic))
         .collect();
     ranked.sort_by(|a, b| b.0.total_cmp(&a.0).then(b.1.id.cmp(&a.1.id)));
+    let analyzed = ranked.len();
     ranked.truncate(count);
 
+    // 前几名的楼主内容与热评也一次请求完
+    let detail_paths: Vec<String> = ranked
+        .iter()
+        .take(DETAIL_COUNT)
+        .map(|(_, topic)| format!("/t/{}.json", topic.id))
+        .collect();
+    let mut details: Vec<Result<TopicDetail, String>> = match shuiyuan::fetch_json_many(&detail_paths).await {
+        Ok(values) => values.into_iter().map(parse).collect(),
+        Err(error) => detail_paths.iter().map(|_| Err(error.clone())).collect(),
+    };
+    details.reverse();
+
+    let beijing_now = campus_time::now();
     let mut report = format!(
-        "水源热点简报（共分析 {} 个帖子，按热度取前 {} 个）\n",
-        ranked.len().max(count),
+        "水源热点简报（共分析 {analyzed} 个帖子，按热度取前 {} 个）\n",
         ranked.len()
     );
     for (rank, (score, topic)) in ranked.iter().enumerate() {
@@ -200,12 +210,17 @@ pub(super) async fn get_hotnews(arguments: serde_json::Value) -> Result<String, 
             topic.like_count,
             topic.views,
             score,
-            topic.last_posted_at.as_deref().unwrap_or("未知"),
+            topic
+                .last_posted_at
+                .as_deref()
+                .and_then(campus_time::parse_time)
+                .map_or("未知".to_string(), |time| campus_time::fmt_day_time(time, beijing_now)),
         ));
         if rank < DETAIL_COUNT {
-            match fetch_json::<TopicDetail>(&format!("/t/{}.json", topic.id)).await {
-                Ok(detail) => append_detail(&mut report, &detail),
-                Err(error) => report.push_str(&format!("   （详情读取失败：{error}）\n")),
+            match details.pop() {
+                Some(Ok(detail)) => append_detail(&mut report, &detail),
+                Some(Err(error)) => report.push_str(&format!("   （详情读取失败：{error}）\n")),
+                None => {}
             }
         }
     }

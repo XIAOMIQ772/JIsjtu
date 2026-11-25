@@ -27,7 +27,46 @@ struct HelperResult {
     #[serde(default)]
     page_closed: bool,
     #[serde(default)]
+    responses: Option<Vec<FetchResponse>>,
+    #[serde(default)]
     error: String,
+}
+
+/// campus_fetch 中的一个站内请求：只能是相对路径，表单随 POST 发送。
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct FetchRequest {
+    pub path: String,
+    pub method: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub form: Option<std::collections::BTreeMap<String, String>>,
+}
+
+impl FetchRequest {
+    pub fn get(path: impl Into<String>) -> Self {
+        Self { path: path.into(), method: "GET", form: None }
+    }
+
+    pub fn post(path: impl Into<String>, form: &[(&str, String)]) -> Self {
+        Self {
+            path: path.into(),
+            method: "POST",
+            form: Some(form.iter().map(|(key, value)| (key.to_string(), value.clone())).collect()),
+        }
+    }
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct FetchResponse {
+    #[serde(default)]
+    pub status: u16,
+    #[serde(default)]
+    pub text: String,
+    #[serde(default)]
+    pub truncated: bool,
+    #[serde(default)]
+    pub redirected: bool,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 fn credentials() -> anyhow::Result<(String, String)> {
@@ -59,6 +98,7 @@ async fn run_helper(
     password: String,
     url: &str,
     text_limit: usize,
+    requests: Value,
 ) -> anyhow::Result<HelperResult> {
     let _guard = BROWSER_LOCK.get_or_init(|| Mutex::new(())).lock().await;
     let python = std::env::var_os("AGENT_SSO_PYTHON").unwrap_or_else(|| "python3".into());
@@ -68,6 +108,7 @@ async fn run_helper(
         "password": password,
         "url": url,
         "text_limit": text_limit,
+        "requests": requests,
         "directory": state_dir()?,
         "browser": std::env::var("AGENT_SSO_BROWSER").ok(),
         "process_guard": PROCESS_GUARD,
@@ -125,7 +166,7 @@ pub async fn login(arguments: Value) -> Result<String, String> {
         return Err("sso_login 不接受参数，账号密码由程序从 .env 读取".into());
     }
     let (account, password) = credentials().map_err(|error| error.to_string())?;
-    let result = run_helper("login", account, password, "", 0)
+    let result = run_helper("login", account, password, "", 0, Value::Null)
         .await
         .map_err(|error| format!("{error:#}"))?;
     Ok(if result.reused {
@@ -176,6 +217,33 @@ pub async fn read_page_text(url: &str, limit: usize) -> Result<String, String> {
         .ok_or_else(|| "浏览器未返回网页文本".into())
 }
 
+/// 打开校园站点的入口页（浏览器自动走完 jAccount 单点登录跳转），再在该页面内依次发起站内请求，
+/// 用于需要登录态的 JSON 接口与表单查询。jAccount 会话过期时自动重新登录一次。
+pub async fn campus_fetch(entry: &str, requests: &[FetchRequest], limit: usize) -> Result<Vec<FetchResponse>, String> {
+    if !is_campus_url(entry) {
+        return Err("campus_fetch 只用于交大站点".into());
+    }
+    let account = std::env::var("EMAIL_USER_ACCOUNT")
+        .ok()
+        .filter(|account| !account.trim().is_empty())
+        .ok_or("请在 .env 中设置 EMAIL_USER_ACCOUNT 和 EMAIL_USER_PASSWORD，校园系统需要 jAccount 登录")?;
+    let payload = serde_json::to_value(requests).map_err(|error| error.to_string())?;
+    let attempt = || run_helper("fetch", account.clone(), String::new(), entry, limit, payload.clone());
+    let result = match attempt().await {
+        Err(error) if format!("{error:#}").contains("需要 jAccount 登录") => {
+            login(json!({})).await?;
+            attempt().await
+        }
+        other => other,
+    }
+    .map_err(|error| format!("{error:#}"))?;
+    let responses = result.responses.ok_or("浏览器未返回请求结果")?;
+    if responses.len() != requests.len() {
+        return Err("浏览器返回的请求结果数量不对".into());
+    }
+    Ok(responses)
+}
+
 async fn visit_site_with_limit(url: &str, show: bool, limit: usize) -> Result<String, String> {
     let valid = reqwest::Url::parse(url).ok().is_some_and(|url| {
         matches!(url.scheme(), "http" | "https")
@@ -193,7 +261,7 @@ async fn visit_site_with_limit(url: &str, show: bool, limit: usize) -> Result<St
         String::new()
     };
     let action = if show { "open" } else { "read" };
-    let result = run_helper(action, account, String::new(), url, limit)
+    let result = run_helper(action, account, String::new(), url, limit, Value::Null)
         .await
         .map_err(|error| format!("{error:#}"))?;
     if show {

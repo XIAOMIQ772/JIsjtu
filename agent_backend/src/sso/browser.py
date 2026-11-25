@@ -603,6 +603,65 @@ class Browser:
             await asyncio.sleep(0.15)
         raise SsoError("网页内容未在限定时间内加载完成，请稍后重试")
 
+    async def settle(self, host):
+        """Wait until SSO redirects finish on `host`; a jAccount form means the session expired."""
+        deadline = time.monotonic() + 25
+        previous = None
+        stable_since = time.monotonic()
+        while time.monotonic() < deadline:
+            try:
+                state = await self.evaluate("""(() => ({ready: document.readyState, origin: location.origin,
+                    host: location.hostname, path: location.pathname,
+                    loginForm: !!document.querySelector('#input-login-pass')}))()""")
+            except SsoError as error:
+                if str(error) != "登录页面正在跳转或结构已变化":
+                    raise
+                await asyncio.sleep(0.15)
+                continue
+            if state["origin"] == self.auth_origin and state["loginForm"] and state["ready"] == "complete":
+                raise SsoError("页面需要 jAccount 登录，请先调用 sso_login 后重试读取")
+            signature = (state["host"], state["path"])
+            if signature != previous:
+                previous = signature
+                stable_since = time.monotonic()
+            if state["host"] == host and state["ready"] == "complete" and time.monotonic() - stable_since >= 0.5:
+                return
+            await asyncio.sleep(0.15)
+        raise SsoError("网页未在限定时间内完成登录跳转，请稍后重试")
+
+    async def page_fetch(self, request, limit):
+        script = """(async () => {
+            const request = REQUEST;
+            const options = {method: request.method, credentials: 'include', cache: 'no-store',
+                             headers: {'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json, text/plain, */*'}};
+            if (request.form) options.body = new URLSearchParams(request.form);
+            try {
+                const response = await fetch(request.path, options);
+                const text = await response.text();
+                return {status: response.status, redirected: response.redirected,
+                        text: text.slice(0, LIMIT), truncated: text.length > LIMIT};
+            } catch (error) {
+                return {status: 0, redirected: false, text: '', truncated: false, error: String(error).slice(0, 200)};
+            }
+        })()""".replace("REQUEST", json.dumps(request)).replace("LIMIT", str(int(limit)))
+        return await self.evaluate(script)
+
+    async def fetch_all(self, url, requests, limit=16000):
+        """Open a campus entry page (completing SSO), then run same-origin fetches inside it."""
+        if not web_url(url):
+            raise SsoError("网页地址必须是 HTTP(S) URL，且不能包含账号密码")
+        checked = [checked_fetch_request(request) for request in requests]
+        if not 1 <= len(checked) <= 20:
+            raise SsoError("一次需要提供 1 到 20 个请求")
+        campus = campus_url(url)
+        async with self.temporary_context(restore=campus):
+            await self.open_site(url)
+            await self.settle(urlsplit(url).hostname)
+            responses = [await self.page_fetch(request, limit) for request in checked]
+            if campus:
+                await self.save_cookies()
+        return {"ok": True, "headless": self.headless, "responses": responses, "page_closed": True}
+
     async def read_site(self, url, limit=16000):
         if not web_url(url):
             raise SsoError("网页地址必须是 HTTP(S) URL，且不能包含账号密码")
@@ -613,6 +672,22 @@ class Browser:
             if campus:
                 await self.save_cookies()
         return {"ok": True, "headless": self.headless, "page": page, "page_closed": True}
+
+
+def checked_fetch_request(request):
+    """Only same-origin relative paths: '//host' and '/\\host' would leave the campus site."""
+    if not isinstance(request, dict):
+        raise SsoError("请求格式不正确")
+    path, method, form = request.get("path"), request.get("method", "GET"), request.get("form")
+    if not isinstance(path, str) or not re.fullmatch(r"/(?![/\\])[^\s\\]*", path):
+        raise SsoError("请求路径必须是站内相对路径")
+    if method not in {"GET", "POST"}:
+        raise SsoError("只支持 GET 和 POST 请求")
+    if form is not None:
+        if method != "POST" or not isinstance(form, dict) or not all(
+                isinstance(key, str) and isinstance(value, str) for key, value in form.items()):
+            raise SsoError("表单只能随 POST 发送，且键值都必须是字符串")
+    return {"path": path, "method": method, "form": form}
 
 
 def captcha_error(message):
@@ -639,7 +714,7 @@ def recognize_captcha(encoded):
 
 async def handle_request(request):
     action = request.get("action")
-    if action not in {"login", "read", "open"}:
+    if action not in {"login", "read", "open", "fetch"}:
         raise SsoError("未知的 SSO 操作")
     account = normalize_account(request.get("account", "")) if request.get("account", "").strip() else "anonymous"
     password = request.get("password", "")
@@ -649,10 +724,15 @@ async def handle_request(request):
     try:
         if action == "login":
             return await browser.login(account, password)
+        limit = request.get("text_limit", 16000)
+        limit = limit if isinstance(limit, int) and 16000 <= limit <= 2000000 else 16000
         if action == "read":
-            limit = request.get("text_limit", 16000)
-            limit = limit if isinstance(limit, int) and 16000 <= limit <= 2000000 else 16000
             return await browser.read_site(request.get("url", ""), limit)
+        if action == "fetch":
+            requests = request.get("requests")
+            if not isinstance(requests, list):
+                raise SsoError("请求格式不正确")
+            return await browser.fetch_all(request.get("url", ""), requests, limit)
         return await browser.open_site(request.get("url", ""))
     finally:
         await browser.close()

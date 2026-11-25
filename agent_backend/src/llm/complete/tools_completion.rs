@@ -20,6 +20,7 @@ mod mail_fetch;
 mod open_usual_website;
 mod pdf_analysis;
 mod read;
+mod shuiyuan;
 mod text;
 mod watch_eduinfo;
 mod watch_shuiyuan;

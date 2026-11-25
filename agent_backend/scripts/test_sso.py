@@ -120,6 +120,15 @@ class IdentityProvider(http.server.BaseHTTPRequestHandler):
             self.respond(404)
 
     def do_POST(self):
+        if urlsplit(self.path).path == "/api/echo":
+            body = self.rfile.read(int(self.headers["Content-Length"])).decode()
+            if self.cookie("SSO") != "active":
+                self.respond(302, headers={"Location": "/profile/jaccount"})
+                return
+            self.server.fetches.append((self.headers.get("X-Requested-With"), self.headers.get("Content-Type", "")))
+            form = {key: values[0] for key, values in parse_qs(body).items()}
+            self.respond(200, json.dumps({"form": form}).encode(), "application/json")
+            return
         request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         self.server.posts.append(request)
         headers = {}
@@ -203,7 +212,7 @@ class SsoBrowserTests(unittest.IsolatedAsyncioTestCase):
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), IdentityProvider)
         self.addCleanup(self.server.server_close)
         self.server.challenge = 0
-        self.server.posts, self.server.images = [], []
+        self.server.posts, self.server.images, self.server.fetches = [], [], []
         self.server.image = captcha_png()
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -505,6 +514,34 @@ class SsoBrowserTests(unittest.IsolatedAsyncioTestCase):
         self.browser.auth_origin = sso.AUTH_ORIGIN
         self.assertFalse(await self.browser.submit("student", "test-password", "1234", ""))
         self.assertEqual(self.server.posts, [])
+
+    async def test_fetch_completes_sso_then_runs_same_origin_requests_in_the_page(self):
+        await self.browser.login("student", "test-password")
+        result = await self.browser.fetch_all(self.origin + "/portal", [
+            {"path": "/api/echo", "method": "POST", "form": {"xnm": "2026", "xqm": "3"}},
+            {"path": "/courses", "method": "GET"},
+        ])
+        self.assertTrue(result["ok"] and result["page_closed"])
+        echo, courses = result["responses"]
+        self.assertEqual(echo["status"], 200)
+        self.assertEqual(json.loads(echo["text"]), {"form": {"xnm": "2026", "xqm": "3"}})
+        self.assertIn("Linear Algebra", courses["text"])
+        self.assertEqual(self.server.fetches[0][0], "XMLHttpRequest")
+        self.assertIn("application/x-www-form-urlencoded", self.server.fetches[0][1])
+        self.assertEqual((await self.browser.cdp.call("Target.getBrowserContexts"))["browserContextIds"], [])
+
+    async def test_fetch_reports_expired_sessions_and_rejects_cross_origin_paths(self):
+        with self.assertRaisesRegex(sso.SsoError, "需要 jAccount 登录"):
+            await self.browser.fetch_all(self.origin + "/portal", [{"path": "/api/echo", "method": "POST", "form": {}}])
+        self.assertEqual(self.server.fetches, [], "no request may run before SSO completes")
+        self.assertEqual((await self.browser.cdp.call("Target.getBrowserContexts"))["browserContextIds"], [])
+        for request in ({"path": "//evil.test/x"}, {"path": "/\\evil.test"}, {"path": "https://evil.test/"},
+                        {"path": "/x", "method": "DELETE"}, {"path": "/x", "form": {"a": "1"}},
+                        {"path": "/x", "method": "POST", "form": {"a": 1}}, "not a request"):
+            with self.assertRaises(sso.SsoError, msg=repr(request)):
+                await self.browser.fetch_all(self.origin + "/portal", [request])
+        with self.assertRaisesRegex(sso.SsoError, "1 到 20"):
+            await self.browser.fetch_all(self.origin + "/portal", [])
 
 
 if __name__ == "__main__":
