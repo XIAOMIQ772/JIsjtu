@@ -11,6 +11,37 @@ fn pdf_cache() -> &'static Mutex<HashMap<String, Arc<Vec<String>>>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+#[cfg(target_os = "macos")]
+fn extract_pages(path: String) -> Result<Vec<String>, String> {
+    use std::ffi::{CStr, CString, c_char};
+
+    unsafe extern "C" {
+        fn jisjtu_pdf_pages(path: *const c_char, error: *mut *mut c_char) -> *mut c_char;
+    }
+    let path = CString::new(path).map_err(|_| "文件路径包含空字符")?;
+    let mut error = std::ptr::null_mut();
+    // The bridge returns a malloc-owned UTF-8 JSON array or a malloc-owned error.
+    unsafe {
+        let pages = jisjtu_pdf_pages(path.as_ptr(), &mut error);
+        if pages.is_null() {
+            if error.is_null() {
+                return Err("系统未能读取 PDF".into());
+            }
+            let message = CStr::from_ptr(error).to_string_lossy().into_owned();
+            libc::free(error.cast());
+            return Err(message);
+        }
+        let parsed = serde_json::from_slice(CStr::from_ptr(pages).to_bytes());
+        libc::free(pages.cast());
+        parsed.map_err(|err| err.to_string())
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn extract_pages(path: String) -> Result<Vec<String>, String> {
+    pdf_extract::extract_text_by_pages(path).map_err(|err| err.to_string())
+}
+
 pub(super) async fn load_pdf_pages(path: &str) -> Result<Arc<Vec<String>>, String> {
     {
         let cache = pdf_cache().lock().unwrap();
@@ -20,13 +51,16 @@ pub(super) async fn load_pdf_pages(path: &str) -> Result<Arc<Vec<String>>, Strin
     }
 
     let owned = path.to_string();
-    let pages = tokio::task::spawn_blocking(move || pdf_extract::extract_text_by_pages(owned))
+    let pages = tokio::task::spawn_blocking(move || extract_pages(owned))
         .await
         .map_err(|err| format!("解析任务失败: {err}"))?
         .map_err(|err| format!("解析 PDF 失败: {err}"))?;
 
     if pages.iter().all(|page| page.trim().is_empty()) {
-        return Err("没有任何文字，可能是扫描版 PDF，需要 OCR".to_string());
+        #[cfg(target_os = "macos")]
+        return Err("PDF 中未识别出文字（已尝试离线 OCR）".into());
+        #[cfg(not(target_os = "macos"))]
+        return Err("没有可提取的文字，扫描版 PDF 的离线 OCR 目前仅支持 macOS".into());
     }
 
     let pages = Arc::new(pages);

@@ -356,7 +356,7 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
         function: (FunctionObject {
             name: "pdf_analysis".to_string(),
             description: Some(
-                "读取 PDF 文件中的文字。页数少的会一次返回全文；页数多时先返回各页开头作为目录，\
+                "读取 PDF 文件中的文字，macOS 会对没有文字层的页面进行离线 OCR。页数少的会一次返回全文；页数多时先返回各页开头作为目录，\
                  再指定 start_page / end_page 读取需要的页面。".to_string(),
             ),
             parameters: Some(json!({

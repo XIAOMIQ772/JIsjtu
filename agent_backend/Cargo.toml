@@ -17,7 +17,6 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "gzi
 regex = "1"
 mime_guess = "2"
 webbrowser = "1"
-pdf-extract = "0.7"
 axum = { version = "0.8", features = ["ws"] }
 tower-http = { version = "0.6", features = ["fs"] }
 imap = "2.4"
@@ -34,3 +33,9 @@ tempfile = "3.27"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+pdf-extract = "0.7"
+
+[build-dependencies]
+cc = "1"
