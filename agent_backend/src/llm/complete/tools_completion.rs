@@ -6,6 +6,7 @@ mod canvas;
 mod course_files;
 mod create_subagents;
 mod edit;
+mod get_announcements;
 mod get_courses;
 mod get_deadlines;
 mod get_exam;
@@ -36,6 +37,7 @@ pub async fn call(name: &str, arguments: serde_json::Value) -> Result<String, St
         "get_courses"=>get_courses::get_courses(arguments).await,
         "get_exam"=>get_exam::get_exam(arguments).await,
         "get_deadlines"=>get_deadlines::get_deadlines(arguments).await,
+        "get_announcements"=>get_announcements::get_announcements(arguments).await,
         "get_hotnews"=>get_hotnews::get_hotnews(arguments).await,
         "watch_shuiyuan"=>watch_shuiyuan::watch_shuiyuan(arguments).await,
         "pdf_analysis"=>pdf_analysis::pdf_analysis(arguments).await,

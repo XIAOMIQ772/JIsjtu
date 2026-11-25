@@ -177,6 +177,25 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
     }),
     ChatCompletionTools::Function(ChatCompletionTool {
         function: (FunctionObject {
+            name: "get_announcements".to_string(),
+            description: Some(
+                "读取 Canvas 课程公告（调课、考试安排、成绩公布、作业说明等），按发布时间从新到旧，带课程名、发布人、是否未读和附件。\
+                 不传 course_id 时汇总所有进行中的课程。用户问“老师最近发了什么通知”“有没有调课/考试通知”时使用。".to_string(),
+            ),
+            parameters: Some(json!({
+                "type":"object",
+                "properties":{
+                    "course_id":{"type":["string","null"],"description":"只看某门课时传课程 id，null 表示所有课程"},
+                    "days":{"type":["integer","null"],"description":"看最近多少天的公告，1 到 180，null 表示默认 14 天"}
+                },
+                "required":["course_id","days"],
+                "additionalProperties":false
+            })),
+            strict: Some(true),
+        }),
+    }),
+    ChatCompletionTools::Function(ChatCompletionTool {
+        function: (FunctionObject {
             name: "watch_shuiyuan".to_string(),
             description: Some(
                 "打开水源社区，复用 jAccount 登录状态。默认 show：打开可见网页并保留给用户。只有用户让助手查询、阅读、提取或总结网页内容时，才明确传 read，在后台读取后自动关闭临时页面。".to_string(),
