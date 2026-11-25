@@ -67,7 +67,7 @@ pub fn router(frontend_dir: PathBuf) -> Router {
     Router::new()
         .route("/ws", get(ws_handler))
         .route("/api/sessions", get(list_sessions).post(new_session))
-        .route("/api/sessions/{id}", get(get_session))
+        .route("/api/sessions/{id}", get(get_session).delete(delete_session))
         .with_state(store)
         .fallback_service(ServeDir::new(frontend_dir))
         .layer(axum::middleware::map_response(|mut response: axum::response::Response| async move {
@@ -96,8 +96,30 @@ async fn get_session(
     axum::extract::State(store): axum::extract::State<Arc<Store>>,
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let session = store.get(&id).await.map_err(internal_error)?;
-    Ok(Json(session.lock().await.snapshot()))
+    let session = store.get(&id).await.map_err(session_error)?;
+    let session = session.lock().await;
+    if session.deleted {
+        return Err((StatusCode::NOT_FOUND, "会话已删除".into()));
+    }
+    Ok(Json(session.snapshot()))
+}
+
+async fn delete_session(
+    axum::extract::State(store): axum::extract::State<Arc<Store>>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    store.delete(&id).await.map_err(session_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn session_error(error: anyhow::Error) -> (StatusCode, String) {
+    use std::io::{Error, ErrorKind};
+    match error.downcast_ref::<Error>().map(Error::kind) {
+        Some(ErrorKind::NotFound) => (StatusCode::NOT_FOUND, "会话不存在或已删除".into()),
+        Some(ErrorKind::InvalidInput) => (StatusCode::BAD_REQUEST, error.to_string()),
+        Some(ErrorKind::ResourceBusy) => (StatusCode::CONFLICT, error.to_string()),
+        _ => internal_error(error),
+    }
 }
 
 fn internal_error(error: anyhow::Error) -> (StatusCode, String) {

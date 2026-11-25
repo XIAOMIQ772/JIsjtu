@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::{Error as IoError, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
@@ -27,6 +28,7 @@ pub struct Record {
 pub struct Session {
     pub record: Record,
     pub busy: bool,
+    pub deleted: bool,
     pub save_error: Option<String>,
     pub tx: broadcast::Sender<Value>,
 }
@@ -39,6 +41,9 @@ impl Session {
     }
 
     pub fn snapshot(&self) -> Value {
+        if self.deleted {
+            return json!({"type": "session_deleted", "session_id": self.record.id});
+        }
         json!({"type": "session_snapshot", "session": self.summary(),
             "events": self.record.events, "save_error": self.save_error})
     }
@@ -85,7 +90,9 @@ impl Store {
     }
 
     pub async fn get(&self, id: &str) -> anyhow::Result<SharedSession> {
-        anyhow::ensure!(valid_id(id), "无效的会话 ID");
+        if !valid_id(id) {
+            return Err(IoError::new(ErrorKind::InvalidInput, "无效的会话 ID").into());
+        }
         let mut loaded = self.loaded.lock().await;
         if let Some(session) = loaded.get(id) {
             return Ok(session.clone());
@@ -116,9 +123,35 @@ impl Store {
             events: vec![],
             revision: 0,
         });
+        let mut loaded = self.loaded.lock().await;
         self.save(&session.lock().await.record)?;
-        self.loaded.lock().await.insert(id, session.clone());
+        loaded.insert(id, session.clone());
         Ok(session)
+    }
+
+    pub async fn delete(&self, id: &str) -> anyhow::Result<()> {
+        let session = self.get(id).await?;
+        // Serialize removal with lookup and with any prompt sent over an existing socket.
+        let mut loaded = self.loaded.lock().await;
+        let mut session = session.lock().await;
+        if session.deleted {
+            return Err(IoError::new(ErrorKind::NotFound, "会话已删除").into());
+        }
+        if session.busy {
+            return Err(IoError::new(ErrorKind::ResourceBusy, "会话正在回复，请在完成后删除").into());
+        }
+        // A failed or interrupted save may have left a partial copy alongside the record.
+        for suffix in ["json.tmp", "json"] {
+            let path = self.root.join(format!("{id}.{suffix}"));
+            match std::fs::remove_file(path) {
+                Err(err) if err.kind() != ErrorKind::NotFound => return Err(err.into()),
+                _ => {}
+            }
+        }
+        session.deleted = true;
+        loaded.remove(id);
+        let _ = session.tx.send(session.snapshot());
+        Ok(())
     }
 
     pub async fn list(&self) -> anyhow::Result<Vec<Value>> {
@@ -131,7 +164,7 @@ impl Store {
                     return None;
                 }
                 let id = path.file_stem()?.to_str()?;
-                (id != "config" && valid_id(id)).then(|| id.to_string())
+                valid_id(id).then(|| id.to_string())
             })
             .collect();
         for id in ids {
@@ -140,7 +173,10 @@ impl Store {
         let sessions: Vec<_> = self.loaded.lock().await.values().cloned().collect();
         let mut summaries = Vec::new();
         for session in sessions {
-            summaries.push(session.lock().await.summary());
+            let guard = session.lock().await;
+            if !guard.deleted {
+                summaries.push(guard.summary());
+            }
         }
         summaries.sort_by_key(|s| std::cmp::Reverse(s["updated_at"].as_i64().unwrap_or(0)));
         Ok(summaries)
@@ -165,7 +201,7 @@ impl Store {
         Ok(())
     }
 
-    pub fn persist(&self, session: &mut Session) {
+    fn persist(&self, session: &mut Session) {
         session.save_error = self
             .save(&session.record)
             .err()
@@ -178,6 +214,7 @@ impl Store {
         prompt: String,
     ) -> anyhow::Result<()> {
         let mut guard = session.lock().await;
+        anyhow::ensure!(!guard.deleted, "这个会话已删除，请切换会话后再发送");
         anyhow::ensure!(!guard.busy, "这个会话仍在处理上一条消息");
         guard.busy = true;
         if guard.record.events.is_empty() {
@@ -253,6 +290,7 @@ fn wrap(record: Record) -> SharedSession {
     Arc::new(Mutex::new(Session {
         record,
         busy: false,
+        deleted: false,
         save_error: None,
         tx,
     }))
@@ -260,6 +298,7 @@ fn wrap(record: Record) -> SharedSession {
 
 fn valid_id(id: &str) -> bool {
     !id.is_empty()
+        && !id.eq_ignore_ascii_case("config")
         && id.len() < 100
         && id
             .bytes()
@@ -280,6 +319,35 @@ pub fn dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn deletion_removes_only_the_idle_history_and_invalidates_old_handles() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::new(root.path().into()));
+        let target = store.create().await.unwrap();
+        let keep = store.create().await.unwrap();
+        let (id, mut events) = {
+            let mut session = target.lock().await;
+            session.busy = true;
+            (session.record.id.clone(), session.tx.subscribe())
+        };
+        assert!(store.delete(&id).await.is_err());
+        target.lock().await.busy = false;
+        std::fs::write(root.path().join("config.json"), b"{}").unwrap();
+        assert!(store.delete("CONFIG").await.is_err());
+        assert!(root.path().join("config.json").exists());
+        let partial = root.path().join(format!("{id}.json.tmp"));
+        std::fs::write(&partial, "partial").unwrap();
+        store.delete(&id).await.unwrap();
+        assert_eq!(events.try_recv().unwrap(), json!({"type":"session_deleted", "session_id":id}));
+        assert!(!partial.exists());
+        assert!(store.start(target, "旧连接".into()).await.is_err());
+        assert!(store.get(&id).await.is_err());
+        assert!(store.delete(&id).await.is_err());
+        let remaining = Store::new(root.path().into()).list().await.unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0]["id"], keep.lock().await.record.id);
+    }
 
     #[tokio::test]
     async fn snapshots_accumulate_fragments_and_persist_one_final_answer() {
