@@ -1793,6 +1793,7 @@ fn tool_label(name: &str) -> Option<&'static str> {
         "class_schedule" => "查看课表",
         "exam_schedule" => "查询考试安排",
         "score_report" => "查询成绩与绩点",
+        "export_calendar" => "导出日历",
         "find_classroom" => "寻找空教室",
         "library_status" => "查看图书馆人数",
         "open_usual_website" => "访问网页",

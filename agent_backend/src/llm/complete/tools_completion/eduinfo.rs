@@ -175,13 +175,18 @@ pub(super) fn classes_from(value: &Value) -> Vec<Class> {
             let periods = text(item, "jcs");
             let (start, end) = periods.split_once('-').unwrap_or((periods.as_str(), periods.as_str()));
             let weeks_text = text(item, "zcd");
+            let (start, end): (u32, u32) = (start.trim().parse().ok()?, end.trim().parse().ok()?);
+            // 节次必须落在作息表里，后面按节次取上下课时间
+            if start == 0 || start > end || end as usize > PERIODS.len() {
+                return None;
+            }
             Some(Class {
                 name: text(item, "kcmc"),
                 teacher: text(item, "xm"),
                 room: text(item, "cdmc"),
                 weekday: text(item, "xqj").parse().ok().filter(|day| (1..=7).contains(day))?,
-                start: start.trim().parse().ok()?,
-                end: end.trim().parse().ok()?,
+                start,
+                end,
                 weeks: parse_weeks(&weeks_text),
                 weeks_text,
                 credit: text(item, "xf"),
@@ -663,7 +668,9 @@ mod tests {
             {"kcmc": "大学物理", "xm": "张老师", "cdmc": "东上院102", "jcs": "3-4", "xqj": "3", "zcd": "1-16周", "xf": "4", "khfsmc": "考试"},
             {"kcmc": "概率统计", "xm": "李老师", "cdmc": "东中院3-104", "jcs": "1-2", "xqj": 3, "zcd": "1-15周(单)", "xf": "3"},
             {"kcmc": "形势与政策", "xm": "", "cdmc": "", "jcs": "11-12", "xqj": "4", "zcd": "5周,8周,11周"},
-            {"kcmc": "坏数据", "jcs": "", "xqj": "9", "zcd": ""}
+            {"kcmc": "坏数据", "jcs": "", "xqj": "9", "zcd": ""},
+            {"kcmc": "越界节次", "jcs": "13-15", "xqj": "2", "zcd": "1-16周"},
+            {"kcmc": "零节次", "jcs": "0-2", "xqj": "2", "zcd": "1-16周"}
         ]})
     }
 

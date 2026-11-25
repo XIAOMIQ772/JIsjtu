@@ -257,6 +257,35 @@ pub(super) fn brief_lines(items: &[PlannerItem], now: DateTime<FixedOffset>, hou
     (soon.into_iter().map(|(_, line)| line).collect(), overdue.into_iter().map(|(_, line)| line).collect())
 }
 
+/// 导出日历用：将来截止、尚未完成的事项（截止时间、课程、标题、链接）。
+pub(super) fn pending_deadlines(
+    items: &[PlannerItem],
+    now: DateTime<FixedOffset>,
+) -> Vec<(DateTime<chrono::Utc>, String, String, Option<String>)> {
+    items
+        .iter()
+        .filter(|item| {
+            !item.planner_override.dismissed && item.plannable_type != "announcement" && item.state() == State::Pending
+        })
+        .filter_map(|item| {
+            let time = item.time().filter(|time| *time >= now)?;
+            let url = item.html_url.as_ref().map(|url| {
+                if url.starts_with("http") {
+                    url.clone()
+                } else {
+                    format!("{}{url}", super::canvas::CANVAS_BASE)
+                }
+            });
+            Some((
+                time.with_timezone(&chrono::Utc),
+                item.context_name.clone().unwrap_or_else(|| "个人".into()),
+                item.plannable.title.as_deref().unwrap_or("(无标题)").trim().to_string(),
+                url,
+            ))
+        })
+        .collect()
+}
+
 pub(super) async fn get_deadlines(arguments: Value) -> Result<String, String> {
     let days = window_days(&arguments)?;
     let include_completed = arguments["include_completed"].as_bool().unwrap_or(false);

@@ -552,6 +552,30 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
         }),
     }),
     ChatCompletionTools::Function(ChatCompletionTool {
+        function: (FunctionObject {
+            name: "export_calendar".to_string(),
+            description: Some(
+                "把本学期课表（按教学周与单双周展开成具体日期，节假日不生成）、已公布的考试和未来 60 天未完成的 Canvas 作业截止\
+                 导出为 .ics 日历文件，带考试与截止提醒，可导入系统日历、手机日历或 Google 日历。\
+                 用户说“把课表导到日历”“同步到手机日历”时使用；默认保存到 ~/Downloads。".to_string(),
+            ),
+            parameters: Some(json!({
+                "type":"object",
+                "properties":{
+                    "include":{
+                        "type":["array","null"],
+                        "items":{"type":"string","enum":["classes","exams","deadlines"]},
+                        "description":"要导出的内容，null 表示全部"
+                    },
+                    "path":{"type":["string","null"],"description":"保存路径，需以 .ics 结尾；null 表示 ~/Downloads/交我集-学年-学期.ics"}
+                },
+                "required":["include","path"],
+                "additionalProperties":false
+            })),
+            strict: Some(true),
+        }),
+    }),
+    ChatCompletionTools::Function(ChatCompletionTool {
         function: FunctionObject {
             name: "open_usual_website".to_string(),
             description: Some(

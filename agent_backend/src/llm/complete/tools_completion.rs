@@ -8,6 +8,7 @@ mod create_subagents;
 mod daily_brief;
 mod edit;
 mod eduinfo;
+mod export_calendar;
 mod find_classroom;
 mod get_announcements;
 mod get_courses;
@@ -59,6 +60,7 @@ pub async fn call(name: &str, arguments: serde_json::Value) -> Result<String, St
         "class_schedule"=>eduinfo::class_schedule(arguments).await,
         "exam_schedule"=>eduinfo::exam_schedule(arguments).await,
         "score_report"=>eduinfo::score_report(arguments).await,
+        "export_calendar"=>export_calendar::export_calendar(arguments).await,
         "mail_fetch"=>mail_fetch::mail_fetch(arguments).await,
         "open_usual_website"=>open_usual_website::open_usual_website(arguments).await,
         "create_subagents"=>create_subagents::create_subagents(arguments).await,
