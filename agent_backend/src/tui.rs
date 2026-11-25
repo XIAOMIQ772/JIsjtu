@@ -12,27 +12,37 @@ use futures_util::{SinkExt, StreamExt};
 use ratatui::{
     Frame, Terminal,
     backend::{Backend, CrosstermBackend},
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
 use serde::Deserialize;
 use serde_json::json;
-use std::{collections::HashMap, io, time::Duration};
+use std::{
+    collections::HashMap,
+    io,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
+};
 use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-const INPUT_MIN_HEIGHT: u16 = 4;
 const WHEEL_SCROLL_LINES: u16 = 3;
-const INPUT_MAX_HEIGHT: u16 = 8;
-const CONTENT_MAX_WIDTH: u16 = 96;
+const INPUT_MAX_ROWS: u16 = 5;
 const ACCENT: Color = Color::Rgb(132, 161, 174);
 const MUTED: Color = Color::Indexed(245);
 const SEPARATOR: Color = Color::Indexed(239);
 const ERROR: Color = Color::Rgb(196, 120, 120);
-const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
+// 输入线程每隔这么久检查一次退出标志；有按键时 poll 会立刻返回，不影响响应速度。
+const INPUT_POLL_INTERVAL: Duration = Duration::from_millis(100);
+// 工作指示动画的帧间隔，只在 agent 工作时才触发重绘。
+const SPINNER_INTERVAL: Duration = Duration::from_millis(100);
+const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const COMMAND_POPUP_ROWS: u16 = 6;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -327,6 +337,9 @@ struct App {
     sending: bool,
     status: String,
     should_quit: bool,
+    // 本地观察到 agent 开始工作的时刻，用来显示已用时间。
+    working_since: Option<Instant>,
+    spinner_frame: usize,
 }
 
 impl App {
@@ -524,15 +537,54 @@ impl App {
 
     fn default_status(&self) -> &'static str {
         if !self.connected {
-            "unconnect"
+            "未连接"
         } else if !self.ready || self.pending_switch.is_some() || self.creating {
-            "syncing"
+            "同步中"
         } else if self.sending {
-            "sending"
+            "发送中"
         } else if self.is_busy() {
-            "addressing"
+            "工作中"
         } else {
-            "ready"
+            "就绪"
+        }
+    }
+
+    // agent（或本地请求）正在进行时，返回要显示在输入框上方的说明；空闲时为 None。
+    fn activity(&self) -> Option<String> {
+        if !self.connected {
+            return None;
+        }
+        if !self.ready {
+            return Some("正在同步会话".into());
+        }
+        if self.creating {
+            return Some("正在新建会话".into());
+        }
+        if self.pending_switch.is_some() {
+            return Some("正在打开会话".into());
+        }
+        if self.sending {
+            return Some("正在发送".into());
+        }
+        if !self.is_busy() {
+            return None;
+        }
+        Some(match self.events.last() {
+            Some(ChatEvent::ToolCall { name }) => {
+                format!("小集正在调用工具 {}", display_text(name).replace('\n', " "))
+            }
+            Some(ChatEvent::AnswerDelta { .. }) => "小集正在回答".into(),
+            _ => "小集正在思考".into(),
+        })
+    }
+
+    // 每次状态变化后调用：记录工作开始时间，空闲后清零。
+    fn refresh_working(&mut self) {
+        if self.activity().is_none() {
+            self.working_since = None;
+        } else if self.working_since.is_none() {
+            self.working_since = Some(Instant::now());
+            self.spinner_frame = 0;
         }
     }
 
@@ -735,14 +787,20 @@ pub async fn run(http_port: u16) -> anyhow::Result<()> {
     terminal.backend_mut().clear()?;
     let mut app = App::new();
     app.connected = true;
+    let stop_input = Arc::new(AtomicBool::new(false));
+    let (input_thread, mut input_rx) = spawn_input_reader(stop_input.clone());
     let result = event_loop(
         &mut terminal,
         &mut app,
         &outgoing_tx,
         &list_tx,
         &mut network_rx,
+        &mut input_rx,
     )
     .await;
+    // 等输入线程退出后再还原终端，避免它吞掉退出之后的按键。
+    stop_input.store(true, Ordering::Relaxed);
+    let _ = input_thread.join();
 
     drop(outgoing_tx);
     drop(list_tx);
@@ -783,52 +841,111 @@ async fn create_session(http: &reqwest::Client, port: u16) -> anyhow::Result<Ses
         .context("新建会话响应格式错误")
 }
 
+// 终端输入在独立线程里阻塞读取，再经通道交给异步事件循环，
+// 这样按键、网络消息和动画计时可以同时等待，谁先到就先处理。
+fn spawn_input_reader(
+    stop: Arc<AtomicBool>,
+) -> (
+    std::thread::JoinHandle<()>,
+    mpsc::UnboundedReceiver<io::Result<TerminalEvent>>,
+) {
+    let (sender, receiver) = mpsc::unbounded_channel();
+    let handle = std::thread::spawn(move || {
+        while !stop.load(Ordering::Relaxed) {
+            let event = match event::poll(INPUT_POLL_INTERVAL) {
+                Ok(false) => continue,
+                Ok(true) => event::read(),
+                Err(error) => Err(error),
+            };
+            let failed = event.is_err();
+            if sender.send(event).is_err() || failed {
+                break;
+            }
+        }
+    });
+    (handle, receiver)
+}
+
+fn handle_network(
+    app: &mut App,
+    event: NetworkEvent,
+    outgoing: &mpsc::UnboundedSender<Message>,
+) {
+    match event {
+        NetworkEvent::Message(message) => app.apply(message),
+        NetworkEvent::SessionList { request_id, result } => {
+            app.receive_sessions(request_id, result);
+        }
+        NetworkEvent::SessionCreated(result) => {
+            app.receive_new_session(result, outgoing);
+        }
+        NetworkEvent::InvalidMessage(error) => {
+            app.status = format!("收到无法解析的消息：{error}");
+        }
+        NetworkEvent::Disconnected(reason) => {
+            app.connected = false;
+            app.ready = false;
+            app.sending = false;
+            app.creating = false;
+            app.pending_switch = None;
+            if let Some(picker) = &mut app.picker {
+                picker.loading = false;
+                picker.error = Some(reason.clone());
+            }
+            app.status = reason;
+        }
+    }
+}
+
+fn handle_terminal(
+    app: &mut App,
+    event: io::Result<TerminalEvent>,
+    outgoing: &mpsc::UnboundedSender<Message>,
+    http_requests: &HttpRequests,
+) -> anyhow::Result<()> {
+    match event.context("读取终端输入失败")? {
+        TerminalEvent::Key(key) if key.kind == KeyEventKind::Press => {
+            handle_key(app, key, outgoing, http_requests)?;
+        }
+        TerminalEvent::Mouse(mouse) => handle_mouse(app, mouse),
+        _ => {}
+    }
+    Ok(())
+}
+
 async fn event_loop(
     terminal: &mut Terminal<CrosstermBackend<TerminalOut>>,
     app: &mut App,
     outgoing: &mpsc::UnboundedSender<Message>,
     http_requests: &HttpRequests,
     network: &mut mpsc::UnboundedReceiver<NetworkEvent>,
+    input: &mut mpsc::UnboundedReceiver<io::Result<TerminalEvent>>,
 ) -> anyhow::Result<()> {
+    let mut spinner = tokio::time::interval(SPINNER_INTERVAL);
+    spinner.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     while !app.should_quit {
+        // 先把状态更新完再画：屏幕上永远是最新状态，积压的消息合并成一帧。
+        app.refresh_working();
         terminal.draw(|frame| draw(frame, app))?;
 
-        while let Ok(event) = network.try_recv() {
-            match event {
-                NetworkEvent::Message(message) => app.apply(message),
-                NetworkEvent::SessionList { request_id, result } => {
-                    app.receive_sessions(request_id, result);
-                }
-                NetworkEvent::SessionCreated(result) => {
-                    app.receive_new_session(result, outgoing);
-                }
-                NetworkEvent::InvalidMessage(error) => {
-                    app.status = format!("收到无法解析的消息：{error}");
-                }
-                NetworkEvent::Disconnected(reason) => {
-                    app.connected = false;
-                    app.ready = false;
-                    app.sending = false;
-                    app.creating = false;
-                    app.pending_switch = None;
-                    if let Some(picker) = &mut app.picker {
-                        picker.loading = false;
-                        picker.error = Some(reason.clone());
-                    }
-                    app.status = reason;
+        tokio::select! {
+            Some(event) = network.recv() => {
+                handle_network(app, event, outgoing);
+                while let Ok(event) = network.try_recv() {
+                    handle_network(app, event, outgoing);
                 }
             }
-        }
-
-        if event::poll(EVENT_POLL_INTERVAL)? {
-            match event::read()? {
-                TerminalEvent::Key(key) if key.kind == KeyEventKind::Press => {
-                    handle_key(app, key, outgoing, http_requests)?;
+            Some(event) = input.recv() => {
+                handle_terminal(app, event, outgoing, http_requests)?;
+                while !app.should_quit {
+                    let Ok(event) = input.try_recv() else { break };
+                    handle_terminal(app, event, outgoing, http_requests)?;
                 }
-                TerminalEvent::Mouse(mouse) => handle_mouse(app, mouse),
-                TerminalEvent::Resize(_, _) => {}
-                _ => {}
             }
+            _ = spinner.tick(), if app.working_since.is_some() => {
+                app.spinner_frame = app.spinner_frame.wrapping_add(1);
+            }
+            else => break,
         }
     }
     Ok(())
@@ -1067,7 +1184,7 @@ fn send_input(
     }
     if !app.can_send() {
         app.status = if app.input.trim().is_empty() {
-            "send your message".into()
+            "请先输入消息".into()
         } else {
             app.default_status().into()
         };
@@ -1092,7 +1209,7 @@ fn send_input(
 }
 
 fn draw(frame: &mut Frame, app: &mut App) {
-    let area = content_area(frame.area());
+    let area = frame.area();
     if area.width < 20 || area.height < 8 {
         frame.render_widget(
             Paragraph::new("请放大终端窗口")
@@ -1102,6 +1219,9 @@ fn draw(frame: &mut Frame, app: &mut App) {
         );
         return;
     }
+    let vertical = u16::from(area.height >= 16);
+    let horizontal = (area.width / 32 + 1).min(6).min((area.width - 20) / 2);
+    let area = area.inner(Margin::new(horizontal, vertical));
     if app.picker.is_some() {
         draw_session_picker(frame, app, area);
         return;
@@ -1118,47 +1238,92 @@ fn draw(frame: &mut Frame, app: &mut App) {
     } else {
         0
     };
-    let input_height = input_height(
-        &app.input,
-        Rect {
-            height: area.height.saturating_sub(notice_height),
-            ..area
-        },
-    );
-    let areas = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(2),
-            Constraint::Min(1),
-            Constraint::Length(notice_height),
-            Constraint::Length(input_height),
-            Constraint::Length(1),
-        ])
-        .split(area);
+    let activity = app.activity();
+    let activity_height = u16::from(activity.is_some() && area.height >= 10);
+    let input_borders = if vertical > 0 {
+        Borders::TOP | Borders::BOTTOM
+    } else {
+        Borders::TOP
+    };
+    let input_block = Block::default()
+        .borders(input_borders)
+        .border_style(Style::default().fg(SEPARATOR));
+    let input_lines = wrap_input(&app.input, area.width - 2);
+    let input_rows = input_lines.len().min(INPUT_MAX_ROWS as usize) as u16;
+    let header_height = 1 + vertical;
+    let min_history_height = 1 + vertical;
+    let fixed_height = header_height + min_history_height + activity_height + notice_height + 1;
+    let input_height = (input_rows + 1 + vertical).min(area.height.saturating_sub(fixed_height));
+    let [header, history, activity_area, notice, input, footer] = Layout::vertical([
+        Constraint::Length(header_height),
+        Constraint::Min(min_history_height),
+        Constraint::Length(activity_height),
+        Constraint::Length(notice_height),
+        Constraint::Length(input_height),
+        Constraint::Length(1),
+    ])
+    .areas(area);
 
-    draw_header(frame, app, areas[0]);
-    draw_history(frame, app, areas[1]);
+    draw_header(frame, app, header);
+    let history = Rect {
+        height: history.height.saturating_sub(vertical),
+        ..history
+    };
+    draw_history(frame, app, history);
+    if let Some(activity) = activity.filter(|_| activity_height > 0) {
+        draw_activity(frame, app, &activity, activity_area);
+    }
     if notice_height > 0 {
         frame.render_widget(
             Paragraph::new(display_text(&app.status))
                 .style(Style::default().fg(ERROR))
                 .wrap(Wrap { trim: false }),
-            areas[2],
+            notice,
         );
     }
-    draw_input(frame, app, areas[3]);
-    draw_help(frame, app, areas[4]);
-    draw_command_popup(frame, app, areas[3]);
+    let input_inner = input_block.inner(input);
+    frame.render_widget(input_block, input);
+    draw_input(frame, app, input_inner, input_lines);
+    draw_help(frame, app, footer);
+    draw_command_popup(frame, app, input, history.y);
 }
 
-fn draw_command_popup(frame: &mut Frame, app: &App, input_area: Rect) {
+fn spinner_symbol(app: &App) -> &'static str {
+    SPINNER_FRAMES[app.spinner_frame % SPINNER_FRAMES.len()]
+}
+
+// 输入框上方的一行工作指示：动画 + 当前在做什么 + 已用时间。
+fn draw_activity(frame: &mut Frame, app: &App, activity: &str, area: Rect) {
+    let mut spans = vec![
+        Span::styled(
+            format!("{} ", spinner_symbol(app)),
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!("{activity}…"), Style::default().fg(ACCENT)),
+    ];
+    if let Some(since) = app.working_since {
+        let seconds = since.elapsed().as_secs();
+        let elapsed = if seconds >= 60 {
+            format!("{}m{:02}s", seconds / 60, seconds % 60)
+        } else {
+            format!("{seconds}s")
+        };
+        spans.push(Span::styled(
+            format!("  {elapsed}"),
+            Style::default().fg(MUTED),
+        ));
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+fn draw_command_popup(frame: &mut Frame, app: &App, input_area: Rect, history_top: u16) {
     let matches = command_matches(&app.input);
     if matches.is_empty() {
         return;
     }
     let rows = (matches.len() as u16)
         .min(COMMAND_POPUP_ROWS)
-        .min(input_area.y.saturating_sub(2));
+        .min(input_area.y.saturating_sub(history_top));
     if rows == 0 {
         return;
     }
@@ -1350,21 +1515,6 @@ fn draw_session_picker(frame: &mut Frame, app: &mut App, area: Rect) {
     );
 }
 
-fn content_area(area: Rect) -> Rect {
-    let horizontal_margin = if area.width >= 60 { 3 } else { 1 };
-    let vertical_margin = if area.height >= 12 { 1 } else { 0 };
-    let width = area
-        .width
-        .saturating_sub(horizontal_margin * 2)
-        .min(CONTENT_MAX_WIDTH);
-    Rect::new(
-        area.x + area.width.saturating_sub(width) / 2,
-        area.y + vertical_margin,
-        width,
-        area.height.saturating_sub(vertical_margin * 2),
-    )
-}
-
 fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
     let title = app
         .session
@@ -1373,58 +1523,49 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         .filter(|title| !title.trim().is_empty())
         .unwrap_or("新的对话")
         .replace(['\n', '\r'], " ");
+    let working = app.activity().is_some();
     let status_color = if !app.connected {
         ERROR
-    } else if app.is_busy() || app.sending {
+    } else if working {
         ACCENT
     } else {
         MUTED
     };
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(0), Constraint::Length(8)])
-        .split(Rect { height: 1, ..area });
+    let status = Line::styled(
+        format!(
+            "{} {}",
+            if working { spinner_symbol(app) } else { "●" },
+            app.default_status()
+        ),
+        Style::default().fg(status_color),
+    );
+    let title_space = area.width.saturating_sub(status.width() as u16 + 2);
     let mut heading = vec![Span::styled(
         "JIsjtu",
         Style::default().add_modifier(Modifier::BOLD),
     )];
-    if columns[0].width >= 22 {
+    if title_space >= 22 {
         heading.push(Span::styled(
             format!("  /  {title}"),
             Style::default().fg(MUTED),
         ));
     }
-    frame.render_widget(Paragraph::new(Line::from(heading)), columns[0]);
+    let heading = Line::from(heading);
+    let width = heading.width().min(title_space as usize) as u16;
+    frame.render_widget(heading, Rect::new(area.x, area.y, width, 1));
     frame.render_widget(
-        Paragraph::new(app.default_status())
-            .style(Style::default().fg(status_color))
-            .alignment(Alignment::Right),
-        columns[1],
+        status,
+        Rect::new(area.x + width + 2, area.y, area.width - width - 2, 1),
     );
 }
 
 fn draw_history(frame: &mut Frame, app: &mut App, area: Rect) {
-    let text = history_text(&app.events);
-    if text.lines.is_empty() {
-        let top = area.height.saturating_sub(4) / 3;
-        frame.render_widget(
-            Paragraph::new(Text::from(vec![
-                Line::from(""),
-                Line::default(),
-                Line::styled("", Style::default().fg(MUTED)),
-            ]))
-            .alignment(Alignment::Center)
-            .wrap(Wrap { trim: false }),
-            Rect {
-                y: area.y + top,
-                height: area.height.saturating_sub(top),
-                ..area
-            },
-        );
+    let rows = history_text(&app.events, area.width).lines;
+    if rows.is_empty() {
         return;
     }
 
-    let content_height = wrapped_height(&text, area.width.max(1));
+    let content_height = rows.len().min(u16::MAX as usize) as u16;
     let max_scroll = content_height.saturating_sub(area.height);
     if app.follow_tail {
         app.scroll = max_scroll;
@@ -1432,43 +1573,93 @@ fn draw_history(frame: &mut Frame, app: &mut App, area: Rect) {
         app.scroll = app.scroll.min(max_scroll);
         app.follow_tail = app.scroll >= max_scroll;
     }
-    let history = Paragraph::new(text)
-        .wrap(Wrap { trim: false })
-        .scroll((app.scroll, 0));
-    frame.render_widget(history, area);
+    let visible: Vec<Line> = rows
+        .into_iter()
+        .skip(app.scroll as usize)
+        .take(area.height as usize)
+        .collect();
+    let height = content_height.min(area.height);
+    let area = Rect::new(area.x, area.bottom() - height, area.width, height);
+    frame.render_widget(Paragraph::new(visible), area);
 }
 
-fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
+// 把每个逻辑行拆成不超过 width 列的屏幕行，保留各段样式。
+// 英文单词尽量整词换到下一行，中文等宽字符按字折行。
+fn wrap_lines(lines: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
+    let width = width.max(1) as usize;
+    let cell_width = |cells: &[(char, Style)]| -> usize {
+        cells
+            .iter()
+            .map(|(character, _)| UnicodeWidthChar::width(*character).unwrap_or_default())
+            .sum()
+    };
+    let to_line = |cells: Vec<(char, Style)>, line_style: Style| -> Line<'static> {
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        let mut current = String::new();
+        let mut current_style = Style::default();
+        for (character, style) in cells {
+            if style != current_style && !current.is_empty() {
+                spans.push(Span::styled(std::mem::take(&mut current), current_style));
+            }
+            current_style = style;
+            current.push(character);
+        }
+        if !current.is_empty() {
+            spans.push(Span::styled(current, current_style));
+        }
+        Line::from(spans).style(line_style)
+    };
+    let mut rows = Vec::new();
+    for line in lines {
+        let line_style = line.style;
+        let mut row: Vec<(char, Style)> = Vec::new();
+        let mut column = 0usize;
+        for span in &line.spans {
+            for character in span.content.chars() {
+                let character_width = UnicodeWidthChar::width(character).unwrap_or_default();
+                if column > 0 && column + character_width > width {
+                    let mut carry = Vec::new();
+                    let mid_word = character.is_ascii_graphic()
+                        && row.last().is_some_and(|(last, _)| last.is_ascii_graphic());
+                    if mid_word {
+                        if let Some(space) = row.iter().rposition(|(c, _)| c.is_whitespace()) {
+                            if cell_width(&row[space + 1..]) * 2 <= width {
+                                carry = row.split_off(space + 1);
+                            }
+                        }
+                    }
+                    rows.push(to_line(std::mem::replace(&mut row, carry), line_style));
+                    column = cell_width(&row);
+                }
+                row.push((character, span.style));
+                column += character_width;
+            }
+        }
+        rows.push(to_line(row, line_style));
+    }
+    rows
+}
+
+fn draw_input(frame: &mut Frame, app: &App, area: Rect, input_lines: Vec<String>) {
     let inner_width = area.width.saturating_sub(2).max(1);
-    let visible_rows = area.height.saturating_sub(3).max(1);
-    let inner = Rect::new(area.x + 2, area.y + 2, inner_width, visible_rows);
+    let visible_rows = area.height;
+    let inner = Rect::new(area.x + 2, area.y, inner_width, visible_rows);
     let before_cursor: String = app.input.chars().take(app.cursor).collect();
     let (cursor_row, cursor_column) = cursor_position(&before_cursor, inner_width);
     let input_scroll = cursor_row.saturating_sub(visible_rows.saturating_sub(1));
     let display_text = if app.input.is_empty() {
         Text::styled(
             if app.is_busy() {
-                "addressing，could send your next message in advance…"
+                "小集正在工作，可以先输入下一条消息…"
             } else {
-                "input message…"
+                "输入消息…"
             },
             Style::default().fg(MUTED),
         )
     } else {
-        Text::from(
-            wrap_input(&app.input, inner_width)
-                .into_iter()
-                .map(Line::raw)
-                .collect::<Vec<_>>(),
-        )
+        Text::from(input_lines.into_iter().map(Line::raw).collect::<Vec<_>>())
     };
 
-    frame.render_widget(
-        Block::default()
-            .borders(Borders::TOP)
-            .border_style(Style::default().fg(SEPARATOR)),
-        area,
-    );
     frame.render_widget(
         Paragraph::new("›").style(Style::default().fg(if app.connected { ACCENT } else { MUTED })),
         Rect::new(area.x, inner.y, 1, 1),
@@ -1501,7 +1692,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     } else if hint_area.width < 52 {
         "↵ 发送  / 命令  Esc 退出"
     } else {
-        "Enter 发送   ↑↓ 滚动   / 命令（/new /resume）   Esc 退出"
+        "Enter 发送   ↑↓ 滚动   / 命令   Esc 退出"
     };
     frame.render_widget(
         Paragraph::new(hint).style(Style::default().fg(MUTED)),
@@ -1517,46 +1708,55 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn history_text(events: &[ChatEvent]) -> Text<'static> {
+fn history_text(events: &[ChatEvent], width: u16) -> Text<'static> {
     let mut lines = Vec::new();
     let mut previous_was_tool = false;
+    let message = |text: &str| {
+        if text.is_empty() {
+            "（无内容）".into()
+        } else {
+            display_text(text)
+        }
+    };
     for event in events {
-        if matches!(
-            event,
-            ChatEvent::ToolResult | ChatEvent::Done | ChatEvent::Unknown
-        ) {
-            continue;
+        let (marker, color, mut body) = match event {
+            ChatEvent::User { text } => ("› ", ACCENT, Text::from(message(text)).lines),
+            ChatEvent::Answer { text } | ChatEvent::AnswerDelta { text } => {
+                ("• ", ACCENT, markdown_lines(&message(text)))
+            }
+            ChatEvent::ToolCall { name } => (
+                "· ",
+                MUTED,
+                vec![Line::styled(display_text(name), Style::default().fg(MUTED))],
+            ),
+            ChatEvent::Error { text } => (
+                "! ",
+                ERROR,
+                Text::from(format!("错误：{}", message(text))).lines,
+            ),
+            ChatEvent::ToolResult | ChatEvent::Done | ChatEvent::Unknown => continue,
+        };
+        if body.is_empty() {
+            body.push(Line::default());
         }
         let is_tool = matches!(event, ChatEvent::ToolCall { .. });
         if !lines.is_empty() && !(is_tool && previous_was_tool) {
             lines.push(Line::default());
         }
-        match event {
-            ChatEvent::User { text } => {
-                append_section(&mut lines, "你", text, Style::default().fg(MUTED))
-            }
-            ChatEvent::Answer { text } | ChatEvent::AnswerDelta { text } => {
-                lines.push(Line::styled(
-                    "小集",
-                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-                ));
-                if text.is_empty() {
-                    lines.push(Line::raw("（无内容）"));
-                } else {
-                    lines.extend(markdown_lines(&display_text(text)));
-                }
-            }
-            ChatEvent::ToolCall { name } => {
-                lines.push(Line::styled(display_text(name), Style::default().fg(MUTED)))
-            }
-            ChatEvent::ToolResult => continue,
-            ChatEvent::Error { text } => append_section(
-                &mut lines,
-                "错误",
-                text,
-                Style::default().fg(ERROR).add_modifier(Modifier::BOLD),
-            ),
-            ChatEvent::Done | ChatEvent::Unknown => continue,
+        for (index, mut row) in wrap_lines(body, width.saturating_sub(2))
+            .into_iter()
+            .enumerate()
+        {
+            let prefix = if index == 0 {
+                Span::styled(
+                    marker,
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Span::raw("  ")
+            };
+            row.spans.insert(0, prefix);
+            lines.push(row);
         }
         previous_was_tool = is_tool;
     }
@@ -1697,19 +1897,6 @@ fn inline_spans(text: &str, base: Style) -> Vec<Span<'static>> {
     spans
 }
 
-fn append_section(lines: &mut Vec<Line<'static>>, label: &str, content: &str, style: Style) {
-    lines.push(Line::styled(label.to_string(), style));
-    if content.is_empty() {
-        lines.push(Line::raw("（无内容）"));
-    } else {
-        lines.extend(
-            display_text(content)
-                .lines()
-                .map(|line| Line::raw(line.to_string())),
-        );
-    }
-}
-
 // 终端会执行控制字符而不是显示它们：\t、\r、ANSI 转义会让真实光标偏离 ratatui
 // 记录的位置，模型的话就会跑进输入框。这里展开制表符，去掉其他控制字符和转义序列。
 fn display_text(text: &str) -> String {
@@ -1758,16 +1945,6 @@ fn display_text(text: &str) -> String {
     output
 }
 
-fn input_height(input: &str, terminal_area: Rect) -> u16 {
-    let width = terminal_area.width.saturating_sub(2).max(1);
-    let desired = (wrap_input(input, width).len().min(u16::MAX as usize) as u16).saturating_add(3);
-    let max_height = terminal_area
-        .height
-        .saturating_sub(4)
-        .clamp(INPUT_MIN_HEIGHT, INPUT_MAX_HEIGHT);
-    desired.clamp(INPUT_MIN_HEIGHT, max_height)
-}
-
 // Use the same cell wrapping for the input and its cursor, including wide Chinese characters.
 fn wrap_input(text: &str, width: u16) -> Vec<String> {
     let width = width.max(1) as usize;
@@ -1805,13 +1982,6 @@ fn cursor_position(text: &str, width: u16) -> (u16, u16) {
             .unwrap_or_default()
             .min(u16::MAX as usize) as u16,
     )
-}
-
-fn wrapped_height(text: &Text<'_>, width: u16) -> u16 {
-    text.lines
-        .iter()
-        .map(|line| visual_line_count(&line.to_string(), width))
-        .fold(0u16, u16::saturating_add)
 }
 
 fn visual_line_count(text: &str, width: u16) -> u16 {
@@ -1906,7 +2076,7 @@ mod tests {
         assert!(!app.should_quit);
         assert_eq!(app.scroll, 12);
         assert!(!app.follow_tail);
-        assert!(history_text(&app.events).to_string().contains("持续生成"));
+        assert!(history_text(&app.events, 80).to_string().contains("持续生成"));
     }
 
     #[test]
@@ -1984,7 +2154,7 @@ mod tests {
         assert!(app.is_current_session("session-2"));
         assert_eq!(app.events.len(), 1);
         assert!(
-            history_text(&app.events)
+            history_text(&app.events, 80)
                 .to_string()
                 .contains("另一个会话的内容")
         );
@@ -2310,7 +2480,7 @@ mod tests {
             ChatEvent::User { text: "**我的输入**".into() },
             ChatEvent::Answer { text: "**回复**\n* 条目".into() },
         ];
-        let rendered = history_text(&events).to_string();
+        let rendered = history_text(&events, 80).to_string();
         assert!(rendered.contains("**我的输入**"));
         assert!(rendered.contains("回复"));
         assert!(!rendered.contains("**回复**"));
@@ -2418,10 +2588,71 @@ mod tests {
     fn input_layout_uses_terminal_width_for_chinese() {
         assert_eq!(visual_line_count("你好ab", 4), 2);
         assert_eq!(cursor_position("你好ab", 4), (1, 2));
-        assert_eq!(
-            input_height("你".repeat(30).as_str(), Rect::new(0, 0, 12, 20)),
-            8
-        );
+        assert_eq!(wrap_input("你好ab", 4), ["你好", "ab"]);
+    }
+
+    #[test]
+    fn multiline_draft_keeps_its_cursor_and_latest_message_visible() {
+        use ratatui::backend::TestBackend;
+
+        let mut app = ready_app(1, true);
+        app.events.push(ChatEvent::AnswerDelta {
+            text: "TAIL".into(),
+        });
+        app.status = "连接提示".into();
+        app.input = format!("{}END", "中文草稿".repeat(90));
+        app.cursor = app.input.chars().count();
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        for (width, height) in [(80, 24), (20, 8), (40, 16)] {
+            terminal.backend_mut().resize(width, height);
+            terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+            let cursor = terminal.backend_mut().get_cursor_position().unwrap();
+            let buffer = terminal.backend().buffer();
+            assert_eq!(buffer[(cursor.x - 1, cursor.y)].symbol(), "D");
+            let screen: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+            assert!(screen.contains("TAIL"));
+        }
+    }
+
+    #[test]
+    fn chat_reflows_inside_the_margins_after_resize() {
+        use ratatui::backend::TestBackend;
+
+        let mut app = ready_app(1, false);
+        app.events.push(ChatEvent::Answer {
+            text: format!("{}Z", "a".repeat(160)),
+        });
+        app.input = "draft".into();
+        app.cursor = app.input.len();
+        let mut terminal = Terminal::new(TestBackend::new(160, 32)).unwrap();
+        for (width, height, side, vertical) in [(160, 32, 6, 1), (40, 12, 2, 0), (132, 24, 5, 1)] {
+            terminal.backend_mut().resize(width, height);
+            terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+            let buffer = terminal.backend().buffer();
+            let cell = |x, y| buffer[(x, y)].symbol();
+            let text_width = width - 2 * side - 2;
+            let footer = height - vertical - 1;
+            let prompt = footer - 1 - vertical;
+            let tail = prompt - 2 - vertical;
+            let start = tail - 160 / text_width;
+            assert_eq!(cell(side, vertical), "J");
+            assert_eq!(cell(side, start), "•");
+            assert_eq!(cell(side + 2, start), "a");
+            assert_eq!(cell(width - side - 1, start), "a");
+            assert_eq!(cell(side + 2 + 160 % text_width, tail), "Z");
+            assert_eq!(cell(side, prompt - 1), "─");
+            assert_eq!(cell(width - side - 1, prompt - 1), "─");
+            assert_eq!(cell(side, prompt), "›");
+            assert_eq!(cell(side + 2, prompt), "d");
+            assert_ne!(cell(side, footer), " ");
+            for y in 0..height {
+                for x in 0..width {
+                    if x < side || x >= width - side || y < vertical || y >= height - vertical {
+                        assert_eq!(cell(x, y), " ", "margin at ({x}, {y}) in {width}x{height}");
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -2447,7 +2678,7 @@ mod tests {
             "preview": "secret result"
         }))
         .unwrap();
-        let rendered = history_text(&[call, result]).to_string();
+        let rendered = history_text(&[call, result], 80).to_string();
         assert!(rendered.contains("read"));
         assert!(!rendered.contains("secret"));
         assert!(!rendered.contains("完成"));
@@ -2470,7 +2701,7 @@ mod tests {
         }
         assert_eq!(app.events.len(), 1);
         assert!(
-            history_text(&app.events)
+            history_text(&app.events, 80)
                 .to_string()
                 .contains("第一段，后续内容")
         );
@@ -2492,6 +2723,84 @@ mod tests {
             !app.follow_tail,
             "a completed snapshot must not move the reader's scroll position"
         );
+    }
+
+    #[test]
+    fn activity_follows_the_agent_through_a_turn() {
+        use ratatui::backend::TestBackend;
+        let mut app = ready_app(1, false);
+        app.refresh_working();
+        assert_eq!(app.activity(), None);
+        assert!(app.working_since.is_none());
+
+        let step = |app: &mut App, revision, busy, event| {
+            app.apply(ServerMessage::SessionEvent {
+                session: session(revision, busy),
+                event,
+            });
+            app.refresh_working();
+        };
+        step(&mut app, 2, true, ChatEvent::User { text: "查课表".into() });
+        assert_eq!(app.activity().as_deref(), Some("小集正在思考"));
+        assert!(app.working_since.is_some());
+        step(&mut app, 3, true, ChatEvent::ToolCall { name: "get_courses".into() });
+        assert_eq!(app.activity().as_deref(), Some("小集正在调用工具 get_courses"));
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        let compact: String = rendered.split_whitespace().collect();
+        assert!(compact.contains("小集正在调用工具get_courses…"), "{rendered}");
+        assert!(compact.contains("工作中"), "{rendered}");
+
+        step(&mut app, 4, true, ChatEvent::ToolResult);
+        assert_eq!(app.activity().as_deref(), Some("小集正在思考"));
+        step(&mut app, 5, true, ChatEvent::AnswerDelta { text: "周一".into() });
+        assert_eq!(app.activity().as_deref(), Some("小集正在回答"));
+        step(&mut app, 6, false, ChatEvent::Done);
+        assert_eq!(app.activity(), None);
+        assert!(app.working_since.is_none());
+
+        // 断线后不能一直显示“工作中”。
+        app.session.as_mut().unwrap().busy = true;
+        app.connected = false;
+        assert_eq!(app.activity(), None);
+    }
+
+    #[test]
+    fn newest_history_line_stays_visible_while_following_tail() {
+        use ratatui::backend::TestBackend;
+        let mut app = ready_app(1, false);
+        for index in 0..12 {
+            app.events.push(ChatEvent::User {
+                text: format!("第{index}个问题，这是一段比较长的中文提问内容用来触发换行"),
+            });
+            app.events.push(ChatEvent::Answer {
+                text: format!(
+                    "回答{index}: the quick brown fox jumps over the lazy dog, https://example.com/a/very/long/path 以及一些中文混排 **加粗** 内容\n- 列表项 one two three four five six seven eight nine ten"
+                ),
+            });
+        }
+        app.events.push(ChatEvent::User { text: "最后一条消息ZZZ".into() });
+        for (width, height) in [(80, 24), (47, 20), (33, 16), (25, 30)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+            let rendered: String = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
+            let compact: String = rendered.split_whitespace().collect();
+            assert!(compact.contains("最后一条消息ZZZ"), "{width}x{height}: {rendered}");
+        }
     }
 
     #[test]

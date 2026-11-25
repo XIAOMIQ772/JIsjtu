@@ -67,42 +67,46 @@ async fn homework_rejects_bad_arguments_before_touching_canvas() {
 }
 
 #[tokio::test]
-async fn homework_submission_requires_the_user_to_type_the_confirmation_code() {
+async fn homework_submits_directly_or_from_the_latest_preview() {
     let file = std::env::temp_dir().join(format!("hw-gate-{}.txt", std::process::id()));
     std::fs::write(&file, "answer v1").unwrap();
-    let pending = |course: &str, code: &str| PendingSubmission {
+    let pending = |course: &str| PendingSubmission {
         course_id: course.to_string(),
         assignment_id: "9".to_string(),
         text: None,
         files: vec![file.clone()],
         files_digest: files_digest(&[file.clone()]).unwrap(),
         comment: None,
-        code: code.to_string(),
-        approved: false,
         created: std::time::Instant::now(),
     };
-    pending_submissions().lock().unwrap().push(pending("gate-1", "481516"));
     let submit = |course: &str| json!({"action": "submit", "course_id": course, "assignment_id": "9", "confirm": true});
+    let has_pending = |course: &str| {
+        pending_submissions().lock().unwrap().iter().any(|item| item.is_for(course, "9"))
+    };
+    // 这些测试不联网：通过内容检查后会停在 Canvas 这一步（缺令牌或请求失败）。
+    let reached_canvas = |error: &str| !error.contains("没有可提交的内容") && !error.contains("预览后被修改");
 
-    // 模型自己传 confirm=true 不够
+    // 没有预览也没带内容：无从提交
+    let error = call("homework", submit("gate-0")).await.unwrap_err();
+    assert!(error.contains("没有可提交的内容"), "{error}");
+
+    // 用户明确同意后，不带内容的 confirm=true 提交预览过的那份，且预览只用一次
+    pending_submissions().lock().unwrap().push(pending("gate-1"));
     let error = call("homework", submit("gate-1")).await.unwrap_err();
-    assert!(error.contains("还没有回复确认码"), "{error}");
-    // 用户消息里没有确认码也不算
-    approve_homework_submissions("好的，提交吧");
-    assert!(call("homework", submit("gate-1")).await.unwrap_err().contains("还没有回复确认码"));
+    assert!(reached_canvas(&error), "{error}");
+    assert!(!has_pending("gate-1"));
+    assert!(call("homework", submit("gate-1")).await.unwrap_err().contains("没有可提交的内容"));
 
-    approve_homework_submissions("确认提交 481516");
-    let error = call("homework", submit("gate-1")).await.unwrap_err();
-    assert!(!error.contains("确认码"), "gate should pass, then fail later: {error}");
-    // 确认码一次有效
-    assert!(call("homework", submit("gate-1")).await.unwrap_err().contains("没有待确认的提交"));
+    // 用户一开始就说了直接交：confirm=true 带内容，无需预览
+    let mut direct = submit("gate-3");
+    direct["text"] = json!("直接提交的答案");
+    let error = call("homework", direct).await.unwrap_err();
+    assert!(reached_canvas(&error), "{error}");
 
-    // 预览后文件被改动，即便已确认也拒绝
-    pending_submissions().lock().unwrap().push(pending("gate-2", "271828"));
-    approve_homework_submissions("确认提交 271828");
+    // 预览后文件被改动则拒绝
+    pending_submissions().lock().unwrap().push(pending("gate-2"));
     std::fs::write(&file, "answer v2").unwrap();
     assert!(call("homework", submit("gate-2")).await.unwrap_err().contains("预览后被修改"));
 
     let _ = std::fs::remove_file(&file);
-    assert_eq!(confirmation_code().len(), 6);
 }

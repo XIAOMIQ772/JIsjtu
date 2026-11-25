@@ -58,6 +58,7 @@ async fn run_helper(
     account: String,
     password: String,
     url: &str,
+    text_limit: usize,
 ) -> anyhow::Result<HelperResult> {
     let _guard = BROWSER_LOCK.get_or_init(|| Mutex::new(())).lock().await;
     let python = std::env::var_os("AGENT_SSO_PYTHON").unwrap_or_else(|| "python3".into());
@@ -66,6 +67,7 @@ async fn run_helper(
         "account": account,
         "password": password,
         "url": url,
+        "text_limit": text_limit,
         "directory": state_dir()?,
         "browser": std::env::var("AGENT_SSO_BROWSER").ok(),
         "process_guard": PROCESS_GUARD,
@@ -123,7 +125,7 @@ pub async fn login(arguments: Value) -> Result<String, String> {
         return Err("sso_login 不接受参数，账号密码由程序从 .env 读取".into());
     }
     let (account, password) = credentials().map_err(|error| error.to_string())?;
-    let result = run_helper("login", account, password, "")
+    let result = run_helper("login", account, password, "", 0)
         .await
         .map_err(|error| format!("{error:#}"))?;
     Ok(if result.reused {
@@ -157,6 +159,24 @@ pub fn is_campus_url(url: &str) -> bool {
 }
 
 pub async fn visit_site(url: &str, show: bool) -> Result<String, String> {
+    visit_site_with_limit(url, show, 16000).await
+}
+
+/// 在后台读取页面纯文本（用于 JSON 接口等需要完整内容的场景），不保留页面。
+pub async fn read_page_text(url: &str, limit: usize) -> Result<String, String> {
+    let output = visit_site_with_limit(url, false, limit).await?;
+    let value: Value = serde_json::from_str(&output).map_err(|error| error.to_string())?;
+    let page = &value["page"];
+    if page["truncated"].as_bool() == Some(true) {
+        return Err("页面内容过长，已被截断".into());
+    }
+    page["text"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| "浏览器未返回网页文本".into())
+}
+
+async fn visit_site_with_limit(url: &str, show: bool, limit: usize) -> Result<String, String> {
     let valid = reqwest::Url::parse(url).ok().is_some_and(|url| {
         matches!(url.scheme(), "http" | "https")
             && url.host_str().is_some()
@@ -173,7 +193,7 @@ pub async fn visit_site(url: &str, show: bool) -> Result<String, String> {
         String::new()
     };
     let action = if show { "open" } else { "read" };
-    let result = run_helper(action, account, String::new(), url)
+    let result = run_helper(action, account, String::new(), url, limit)
         .await
         .map_err(|error| format!("{error:#}"))?;
     if show {

@@ -14,7 +14,7 @@ mod streaming;
 pub mod tools;
 pub mod tools_completion;
 use streaming::{StreamedMessage, stream_message};
-use tools_completion::{USER_NOTICE_MARK, approve_homework_submissions, call};
+use tools_completion::{USER_NOTICE_MARK, call};
 
 const EVENT_PREVIEW_CHARS: usize = 500;
 
@@ -97,11 +97,6 @@ async fn chat_with_tools(
             .build()?
             .into(),
     );
-    // 只有主 agent 的 prompt 是用户亲手输入的；子 agent 的任务由模型撰写，不能用来确认提交。
-    if allow_subagents {
-        approve_homework_submissions(prompt);
-    }
-
     // 每一轮就是一次“思考 → 行动 → 观察”，步数受 MAX_REACT_STEPS 限制。
     for _ in 0..MAX_REACT_STEPS {
         let request = CreateChatCompletionRequestArgs::default()
@@ -156,6 +151,9 @@ async fn chat_with_tools(
                                 name: name.clone(),
                                 arguments: preview(arguments),
                             });
+                            // 让出一次执行权，保证“正在调用工具”先送到界面，
+                            // 即使接下来的工具在同步阻塞。
+                            tokio::task::yield_now().await;
                         }
 
                         let outcome = if name == "create_subagents" && !allow_subagents {

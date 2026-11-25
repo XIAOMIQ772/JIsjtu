@@ -170,6 +170,23 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
     
     ChatCompletionTools::Function(ChatCompletionTool {
         function: (FunctionObject {
+            name: "get_hotnews".to_string(),
+            description: Some(
+                "抓取水源社区最新与本周热门帖子，按点赞、回复、浏览量和时效计算热度，返回热点帖子简报（含链接、数据及前几名的楼主内容与热评）。用户想看看水源热点、热帖、最近水源在讨论什么时调用；只想打开水源网页时用 watch_shuiyuan。".to_string(),
+            ),
+            parameters: Some(json!({
+                "type":"object",
+                "properties":{
+                    "limit":{"type":["integer","null"],"description":"返回的热点帖子数量，1 到 20，null 表示默认 8"}
+                },
+                "required":["limit"],
+                "additionalProperties":false
+            })),
+            strict: Some(true),
+        }),
+    }),
+    ChatCompletionTools::Function(ChatCompletionTool {
+        function: (FunctionObject {
             name: "get_time_stamp".to_string(),
             description: Some(
                 "获取当前系统时间".to_string(),
@@ -255,8 +272,9 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
                  来源三选一：path=本地 PDF 或文本文件，text=作业只是一段文字时直接传入，course_id+assignment_id=Canvas 作业（自动读取说明并下载其中的 PDF 附件）。\
                  题目较多时先返回目录，再用 question 传序号读取单题。写作业时先用它拿到题目再逐题作答。\
                  action=submit：text 为在线文本提交，files 为上传本地文件提交，二者只能选一。\
-                 先用 confirm=false 生成预览，系统会把预览和确认码直接展示给用户；\
-                 只有用户亲自回复确认码后，confirm=true 才会提交用户确认过的那份内容。".to_string(),
+                 用户已经明确说可以提交（如“写完直接交”“提交吧”）时，传 confirm=true 直接提交；\
+                 用户没有明确说要提交时，传 confirm=false 生成预览，系统会把预览直接展示给用户，\
+                 等用户回复同意后再用 confirm=true 提交预览过的那份内容。".to_string(),
             ),
             parameters: Some(json!({
                 "type":"object",
@@ -297,7 +315,7 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
                     },
                     "confirm":{
                         "type":"boolean",
-                        "description":"submit：false 生成预览；用户回复确认码后传 true，此时只需 course_id 与 assignment_id"
+                        "description":"submit：用户已明确同意提交时传 true，直接提交；否则传 false 只生成预览。预览后用户同意再传 true 时只需 course_id 与 assignment_id"
                     }
                 },
                 "required":["action"],

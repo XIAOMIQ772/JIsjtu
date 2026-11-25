@@ -556,7 +556,7 @@ class Browser:
             raise SsoError("网页导航失败，请检查地址和网络")
         return {"ok": True, "headless": self.headless}
 
-    async def page_content(self):
+    async def page_content(self, limit=16000):
         deadline = time.monotonic() + 20
         previous = None
         stable_since = time.monotonic()
@@ -584,8 +584,8 @@ class Browser:
                         return [{text, url}];
                     }).slice(0, 80);
                     return {ready: document.readyState, origin: location.origin, loginForm: !!document.querySelector('#input-login-pass'), url: safeUrl(location.href),
-                            title: document.title, text: text.slice(0, 16000), truncated: text.length > 16000, links};
-                })()""")
+                            title: document.title, text: text.slice(0, LIMIT), truncated: text.length > LIMIT, links};
+                })()""".replace('LIMIT', str(int(limit))))
             except SsoError as error:
                 if str(error) != "登录页面正在跳转或结构已变化":
                     raise
@@ -603,13 +603,13 @@ class Browser:
             await asyncio.sleep(0.15)
         raise SsoError("网页内容未在限定时间内加载完成，请稍后重试")
 
-    async def read_site(self, url):
+    async def read_site(self, url, limit=16000):
         if not web_url(url):
             raise SsoError("网页地址必须是 HTTP(S) URL，且不能包含账号密码")
         campus = campus_url(url)
         async with self.temporary_context(restore=campus):
             await self.open_site(url)
-            page = await self.page_content()
+            page = await self.page_content(limit)
             if campus:
                 await self.save_cookies()
         return {"ok": True, "headless": self.headless, "page": page, "page_closed": True}
@@ -650,7 +650,9 @@ async def handle_request(request):
         if action == "login":
             return await browser.login(account, password)
         if action == "read":
-            return await browser.read_site(request.get("url", ""))
+            limit = request.get("text_limit", 16000)
+            limit = limit if isinstance(limit, int) and 16000 <= limit <= 2000000 else 16000
+            return await browser.read_site(request.get("url", ""), limit)
         return await browser.open_site(request.get("url", ""))
     finally:
         await browser.close()

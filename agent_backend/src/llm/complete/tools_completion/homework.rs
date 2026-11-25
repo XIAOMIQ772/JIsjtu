@@ -814,9 +814,9 @@ async fn upload_submission_file(
 
 /// 工具结果里这条分隔线之后的内容由聊天循环直接展示给用户，不进入模型上下文。
 pub const USER_NOTICE_MARK: &str = "\n<<<仅展示给用户>>>\n";
-const HOMEWORK_CONFIRM_MINUTES: u64 = 30;
+const HOMEWORK_PREVIEW_MINUTES: u64 = 30;
 
-/// 等待用户确认的提交。真正提交时只用这里保存的内容，模型无法在确认后替换答案。
+/// 一份待提交的内容。预览后保存在这里，用户同意后提交的就是预览过的这一份。
 struct PendingSubmission {
     course_id: String,
     assignment_id: String,
@@ -824,14 +824,36 @@ struct PendingSubmission {
     files: Vec<PathBuf>,
     files_digest: u64,
     comment: Option<String>,
-    code: String,
-    approved: bool,
     created: std::time::Instant,
 }
 
 impl PendingSubmission {
     fn expired(&self) -> bool {
-        self.created.elapsed().as_secs() > HOMEWORK_CONFIRM_MINUTES * 60
+        self.created.elapsed().as_secs() > HOMEWORK_PREVIEW_MINUTES * 60
+    }
+
+    fn kind(&self) -> &'static str {
+        if self.text.is_some() { "online_text_entry" } else { "online_upload" }
+    }
+
+    fn is_for(&self, course_id: &str, assignment_id: &str) -> bool {
+        self.course_id == course_id && self.assignment_id == assignment_id
+    }
+
+    /// 给用户看的内容说明：正文或文件清单，以及附言。
+    fn describe(&self) -> String {
+        let mut out = String::new();
+        if let Some(text) = &self.text {
+            out.push_str(&format!("\n提交内容（共 {} 字）：\n{text}\n", text.chars().count()));
+        }
+        for file in &self.files {
+            let size = std::fs::metadata(file).map(|meta| meta.len()).unwrap_or(0);
+            out.push_str(&format!("\n提交文件：{}（{size} 字节）", file.display()));
+        }
+        if let Some(comment) = &self.comment {
+            out.push_str(&format!("\n附言：{comment}\n"));
+        }
+        out
     }
 }
 
@@ -840,28 +862,42 @@ fn pending_submissions() -> &'static Mutex<Vec<PendingSubmission>> {
     PENDING.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-/// 由聊天循环在每轮开始时用用户本人输入的原文调用：只有用户亲手输入确认码，
-/// 对应的提交才会放行。模型无法伪造用户消息，因此不能替用户确认。
-pub fn approve_homework_submissions(user_prompt: &str) {
-    let mut pending = pending_submissions().lock().unwrap();
-    pending.retain(|submission| !submission.expired());
-    for submission in pending.iter_mut() {
-        if user_prompt.contains(&submission.code) {
-            submission.approved = true;
+/// 从本次调用的参数里读出要提交的内容；text 和 files 都没给时返回 None。
+fn submission_from_arguments(
+    arguments: &serde_json::Value,
+    course_id: &str,
+    assignment_id: &str,
+) -> Result<Option<PendingSubmission>, String> {
+    let text = homework_arg(arguments, "text");
+    let files: Vec<PathBuf> = arguments["files"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::trim).filter(|path| !path.is_empty()))
+                .map(PathBuf::from)
+                .collect()
+        })
+        .unwrap_or_default();
+    match (text.is_some(), files.is_empty()) {
+        (true, false) => return Err("text 和 files 只能二选一：Canvas 一次提交只能是在线文本或文件上传".to_string()),
+        (false, true) => return Ok(None),
+        _ => {}
+    }
+    for file in &files {
+        if !file.is_file() {
+            return Err(format!("文件 {} 不存在", file.display()));
         }
     }
-}
-
-fn confirmation_code() -> String {
-    use std::hash::{BuildHasher, Hasher};
-    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
-    hasher.write_u128(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_nanos())
-            .unwrap_or_default(),
-    );
-    format!("{:06}", hasher.finish() % 1_000_000)
+    Ok(Some(PendingSubmission {
+        course_id: course_id.to_string(),
+        assignment_id: assignment_id.to_string(),
+        text: text.map(str::to_string),
+        files_digest: files_digest(&files)?,
+        files,
+        comment: homework_arg(arguments, "comment").map(str::to_string),
+        created: std::time::Instant::now(),
+    }))
 }
 
 fn files_digest(files: &[PathBuf]) -> Result<u64, String> {
@@ -911,77 +947,32 @@ fn check_submittable(assignment: &HomeworkAssignment, kind: &str, files: &[PathB
 }
 
 async fn preview_homework(arguments: &serde_json::Value, course_id: &str, assignment_id: &str) -> Result<String, String> {
-    let text = homework_arg(arguments, "text");
-    let files: Vec<PathBuf> = arguments["files"]
-        .as_array()
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| item.as_str().map(str::trim).filter(|path| !path.is_empty()))
-                .map(PathBuf::from)
-                .collect()
-        })
-        .unwrap_or_default();
-    let comment = homework_arg(arguments, "comment");
-
-    let kind = match (text.is_some(), files.is_empty()) {
-        (true, false) => return Err("text 和 files 只能二选一：Canvas 一次提交只能是在线文本或文件上传".to_string()),
-        (false, true) => return Err("请提供要提交的内容：text（在线文本）或 files（本地文件路径）".to_string()),
-        (true, true) => "online_text_entry",
-        (false, false) => "online_upload",
-    };
-    for file in &files {
-        if !file.is_file() {
-            return Err(format!("文件 {} 不存在", file.display()));
-        }
-    }
+    let submission = submission_from_arguments(arguments, course_id, assignment_id)?
+        .ok_or_else(|| "请提供要提交的内容：text（在线文本）或 files（本地文件路径）".to_string())?;
+    let kind = submission.kind();
 
     let token = canvas_token()?;
     let client = reqwest::Client::new();
     let assignment = fetch_homework_assignment(&client, &token, course_id, assignment_id).await?;
-    check_submittable(&assignment, kind, &files)?;
+    check_submittable(&assignment, kind, &submission.files)?;
 
-    let code = confirmation_code();
-    let mut notice = format!("【作业提交预览，尚未提交】\n{}本次提交方式：{kind}\n", assignment.summary());
-    if let Some(text) = text {
-        notice.push_str(&format!("\n提交内容（共 {} 字）：\n{text}\n", text.chars().count()));
-    }
-    for file in &files {
-        let size = std::fs::metadata(file).map(|meta| meta.len()).unwrap_or(0);
-        notice.push_str(&format!("\n提交文件：{}（{size} 字节）", file.display()));
-    }
-    if let Some(comment) = comment {
-        notice.push_str(&format!("\n附言：{comment}\n"));
-    }
-    notice.push_str(&format!(
-        "\n请核对以上内容。确认无误后回复：确认提交 {code}\n确认码 {HOMEWORK_CONFIRM_MINUTES} 分钟内有效，不回复则不会提交。"
-    ));
-
-    let submission = PendingSubmission {
-        course_id: course_id.to_string(),
-        assignment_id: assignment_id.to_string(),
-        text: text.map(str::to_string),
-        files_digest: files_digest(&files)?,
-        files,
-        comment: comment.map(str::to_string),
-        code,
-        approved: false,
-        created: std::time::Instant::now(),
-    };
+    let notice = format!(
+        "【作业提交预览，尚未提交】\n{}本次提交方式：{kind}\n{}\n请核对以上内容。确认无误后回复“提交”即可；不回复则不会提交。",
+        assignment.summary(),
+        submission.describe()
+    );
     {
         let mut pending = pending_submissions().lock().unwrap();
-        // 同一作业只保留最新一次预览，旧确认码随之作废
-        pending.retain(|old| {
-            !old.expired() && !(old.course_id == course_id && old.assignment_id == assignment_id)
-        });
+        // 同一作业只保留最新一次预览
+        pending.retain(|old| !old.expired() && !old.is_for(course_id, assignment_id));
         pending.push(submission);
     }
 
     Ok(format!(
-        "提交预览和确认码已由系统直接展示给用户，作业尚未提交。\
-         请简短提醒用户核对预览并回复确认码，然后结束本轮回答，等待用户回复。\
-         用户回复确认码后，用 action=submit、confirm=true 和相同的 course_id、assignment_id 提交，\
-         届时会提交用户确认过的那份内容。不要替用户确认，也不要编造确认码。\
+        "提交预览已由系统直接展示给用户，作业尚未提交。\
+         请简短提醒用户核对预览，然后结束本轮回答，等待用户回复。\
+         用户明确表示可以提交后，用 action=submit、confirm=true 和相同的 course_id、assignment_id 提交，\
+         不必再传内容，届时提交的就是预览过的这一份。用户没有明确同意前不要提交。\
          如需修改内容，请重新预览。{USER_NOTICE_MARK}{notice}"
     ))
 }
@@ -991,27 +982,29 @@ async fn submit_homework(arguments: &serde_json::Value) -> Result<String, String
         .ok_or_else(|| "提交作业需要 course_id".to_string())?;
     let assignment_id = homework_arg(arguments, "assignment_id")
         .ok_or_else(|| "提交作业需要 assignment_id，可由 get_exam 获取".to_string())?;
+    // confirm=true 表示用户已经明确同意提交；否则只生成预览，请用户过目。
     if arguments["confirm"].as_bool() != Some(true) {
         return preview_homework(arguments, course_id, assignment_id).await;
     }
 
+    // 这次调用带了内容就直接交这份；没带内容就交之前预览过的那份。
+    let fresh = submission_from_arguments(arguments, course_id, assignment_id)?;
     let submission = {
         let mut pending = pending_submissions().lock().unwrap();
         pending.retain(|submission| !submission.expired());
-        let position = pending
+        let previewed = pending
             .iter()
-            .position(|submission| submission.course_id == course_id && submission.assignment_id == assignment_id)
-            .ok_or_else(|| "这份作业没有待确认的提交（或确认码已过期），请先用 confirm=false 生成预览".to_string())?;
-        if !pending[position].approved {
-            return Err("用户还没有回复确认码，作业未提交。请等待用户亲自回复预览中的确认码，不要替用户确认".to_string());
-        }
-        pending.remove(position)
+            .position(|submission| submission.is_for(course_id, assignment_id))
+            .map(|position| pending.remove(position));
+        fresh.or(previewed).ok_or_else(|| {
+            "没有可提交的内容：请传入 text 或 files；这份作业也没有仍然有效的预览".to_string()
+        })?
     };
     if files_digest(&submission.files)? != submission.files_digest {
         return Err("提交文件在预览后被修改，作业未提交，请重新预览并让用户确认".to_string());
     }
 
-    let kind = if submission.text.is_some() { "online_text_entry" } else { "online_upload" };
+    let kind = submission.kind();
     let token = canvas_token()?;
     let client = reqwest::Client::new();
     let assignment = fetch_homework_assignment(&client, &token, course_id, assignment_id).await?;
@@ -1046,7 +1039,13 @@ async fn submit_homework(arguments: &serde_json::Value) -> Result<String, String
         .await
         .map_err(|err| format!("解析提交结果失败: {err}"))?;
 
-    let mut report = format!("已提交作业「{}」（内容为用户确认过的预览）\n", assignment.name);
+    let mut report = format!("已提交作业「{}」，提交方式：{kind}\n", assignment.name);
+    for file in &submission.files {
+        report.push_str(&format!("文件：{}\n", file.display()));
+    }
+    if let Some(text) = &submission.text {
+        report.push_str(&format!("在线文本共 {} 字\n", text.chars().count()));
+    }
     if let Some(time) = result["submitted_at"].as_str() {
         report.push_str(&format!("提交时间：{time}\n"));
     }

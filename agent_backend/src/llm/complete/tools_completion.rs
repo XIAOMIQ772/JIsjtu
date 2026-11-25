@@ -6,6 +6,7 @@ mod create_subagents;
 mod edit;
 mod get_courses;
 mod get_exam;
+mod get_hotnews;
 mod get_time_stamp;
 mod homework;
 mod mail_fetch;
@@ -16,7 +17,7 @@ mod watch_eduinfo;
 mod watch_shuiyuan;
 mod write;
 
-pub use homework::{USER_NOTICE_MARK, approve_homework_submissions};
+pub use homework::USER_NOTICE_MARK;
 
 const MAX_OUTPUT_CHARS: usize = 16000;
 
@@ -30,6 +31,7 @@ pub async fn call(name: &str, arguments: serde_json::Value) -> Result<String, St
         "get_time_stamp"=>get_time_stamp::get_time_stamp(arguments).await,
         "get_courses"=>get_courses::get_courses(arguments).await,
         "get_exam"=>get_exam::get_exam(arguments).await,
+        "get_hotnews"=>get_hotnews::get_hotnews(arguments).await,
         "watch_shuiyuan"=>watch_shuiyuan::watch_shuiyuan(arguments).await,
         "pdf_analysis"=>pdf_analysis::pdf_analysis(arguments).await,
         "course_files"=>course_files::course_files(arguments).await,
