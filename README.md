@@ -8,6 +8,8 @@
 
 前端使用 HTML / CSS / JavaScript，后端使用 Rust + Axum，通过 WebSocket 传递回答与工具进度。`JIsjtu` 和源码运行的 `cargo run` 都默认使用终端界面；显式指定 `--web` 或 `web` 才打开网页，无需单独启动前端。
 
+更新内容见 [CHANGELOG.md](CHANGELOG.md)。
+
 ## 速度启动
 下载JIsjtu.zip
 解压后查看 README.md。
