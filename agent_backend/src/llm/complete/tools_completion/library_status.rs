@@ -57,7 +57,7 @@ fn render(counts: &Counts) -> String {
     if let Some((area, _)) = quietest {
         text.push_str(&format!("按占用比例，现在最空的是{}。\n", area.area_name.trim()));
     }
-    text.push_str("人数来自图书馆闸机统计；开放时间与座位预约以图书馆官网（lib.sjtu.edu.cn）为准。");
+    text.push_str("人数来自图书馆闸机统计；开放时间与座位预约以图书馆官网（www.lib.sjtu.edu.cn）为准。");
     text
 }
 
