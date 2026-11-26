@@ -4,6 +4,7 @@ import fcntl
 import os
 from pathlib import Path
 import pty
+import re
 import select
 import socket
 import stat
@@ -28,6 +29,7 @@ def check_default_tui(executable, cwd, environment):
         os.close(slave)
         slave = None
         screen = bytearray()
+        asked_memory = False
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             if select.select([master], [], [], 0.1)[0]:
@@ -35,15 +37,31 @@ def check_default_tui(executable, cwd, environment):
                     screen.extend(os.read(master, 65536))
                 except OSError:
                     break
-            if b"\x1b[?1049h" in screen and b"/sessions" in screen:
+            # Ratatui can position the cursor between two double-width characters.
+            visible = re.sub(rb"\x1b\[[0-9;?]*[A-Za-z]", b"", screen)
+            if not asked_memory and b"\x1b[?1049h" in screen and "就绪".encode() in visible:
+                os.write(master, b"/memory\r")
+                asked_memory = True
+            if asked_memory and b"AGENT_DREAMING=1" in screen:
                 break
             assert process.poll() is None, "Default entry point exited before rendering TUI"
-        assert b"\x1b[?1049h" in screen and b"/sessions" in screen, "Default entry point did not render TUI"
+        assert asked_memory and b"AGENT_DREAMING=1" in screen, "Installed TUI did not answer /memory"
         os.write(master, b"\x03")
+        # Drain the last redraw and alternate-screen teardown before waiting. A
+        # full PTY output buffer can hold up a terminating child on macOS.
+        deadline = time.monotonic() + 5
+        while process.poll() is None and time.monotonic() < deadline:
+            if select.select([master], [], [], 0.1)[0]:
+                try:
+                    if not os.read(master, 65536):
+                        break
+                except OSError:
+                    break
         assert process.wait(timeout=5) == 0, "TUI must exit cleanly on Ctrl+C"
     finally:
         if slave is not None:
             os.close(slave)
+        os.close(master)
         if process is not None and process.poll() is None:
             process.terminate()
             try:
@@ -51,7 +69,6 @@ def check_default_tui(executable, cwd, environment):
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
-        os.close(master)
 
 
 repo = Path(__file__).resolve().parent.parent
@@ -166,7 +183,8 @@ with tempfile.TemporaryDirectory(prefix="jisjtu-package-") as temporary:
         ports = [listener.getsockname()[1] for listener in sockets]
         for listener in sockets:
             listener.close()
-        env = dict(os.environ, AGENT_NO_BROWSER="1", AGENT_SSO_AUTO_LOGIN="0", AGENT_HTTP_PORT=str(ports[0]), AGENT_TCP_PORT=str(ports[1]))
+        env = dict(os.environ, AGENT_NO_BROWSER="1", AGENT_SSO_AUTO_LOGIN="0", AGENT_REMINDERS="0",
+                   AGENT_DREAMING="0", AGENT_HTTP_PORT=str(ports[0]), AGENT_TCP_PORT=str(ports[1]))
         for executable in (installed_binary, launcher):
             check_default_tui(executable, installed_binary.parent, env)
         print("PASS: both the release binary and installed command default to TUI and exit cleanly.", flush=True)
