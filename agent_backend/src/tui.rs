@@ -349,18 +349,18 @@ impl Drop for StdioRedirect {
 impl TerminalGuard {
     fn enter() -> io::Result<Self> {
         enable_raw_mode()?;
-        if let Err(error) = execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture, Hide) {
-            let _ = disable_raw_mode();
-            return Err(error);
-        }
-        Ok(Self)
+        let guard = Self;
+        execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture, Hide)?;
+        Ok(guard)
     }
 }
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        let _ = disable_raw_mode();
+        // On Windows, disabling mouse capture restores the mode saved after
+        // enable_raw_mode(). Restore normal keyboard input after that step.
         let _ = execute!(io::stdout(), Show, DisableMouseCapture, LeaveAlternateScreen);
+        let _ = disable_raw_mode();
     }
 }
 
