@@ -108,7 +108,7 @@ def add_tesseract_files(files, stage):
     folder = stage / "pdf-tools"
     folder.mkdir(parents=True, exist_ok=True)
     exe = folder / "tesseract.exe"
-    subprocess.run(["x86_64-w64-mingw32-strip", "-o", exe, binary], check=True)
+    subprocess.run(["x86_64-w64-mingw32-strip", "-p", "-o", exe, binary], check=True)
     files["pdf-tools/tesseract.exe"] = exe
     for relative, source in paths.items():
         path = folder / relative
