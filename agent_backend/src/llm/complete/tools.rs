@@ -379,7 +379,7 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
         function: (FunctionObject {
             name: "pdf_analysis".to_string(),
             description: Some(
-                "读取 PDF 文字，macOS 会离线识别扫描页和文字旁的截图。长文档先返回目录，可按 start_page / end_page 读原文。\
+                "读取 PDF 文字，macOS 和 Windows 会离线识别扫描页和文字旁的截图。长文档先返回目录，可按 start_page / end_page 读原文。\
                  图形、公式或表格的含义仍不清楚时，传 image_page，把该页彩色原图交给当前配置的模型查看，需支持图片输入。".to_string(),
             ),
             parameters: Some(json!({
@@ -399,7 +399,7 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
                     },
                     "image_page":{
                         "type":"integer","minimum":1,
-                        "description":"macOS 按需查看原图。传 PDF 文件内从 1 开始的单页页码，该页会发给当前模型。"
+                        "description":"Windows 和 macOS 按需查看原图。传 PDF 文件内从 1 开始的单页页码，该页会发给当前模型。"
                     }
                 },
                 "required":["path"],

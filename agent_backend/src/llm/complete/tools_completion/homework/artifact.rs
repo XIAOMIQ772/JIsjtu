@@ -34,7 +34,12 @@ fn pdf_page_count(path: &Path, _: &[u8]) -> usize {
         .map_or(0, |name| unsafe { jisjtu_pdf_page_count(name.as_ptr()) })
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
+fn pdf_page_count(_: &Path, bytes: &[u8]) -> usize {
+    super::super::pdf_windows::page_count(bytes)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn pdf_page_count(_: &Path, bytes: &[u8]) -> usize {
     pdf_extract::Document::load_mem(bytes)
         .ok()

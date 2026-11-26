@@ -42,7 +42,10 @@ pub(super) fn extract_pages(bytes: &[u8]) -> Result<Vec<String>, String> {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
+pub(super) use super::pdf_windows::extract_pages;
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub(super) fn extract_pages(bytes: &[u8]) -> Result<Vec<String>, String> {
     pdf_extract::extract_text_from_mem_by_pages(bytes).map_err(|err| err.to_string())
 }
@@ -67,10 +70,10 @@ fn cached_pages(path: &str) -> Result<Arc<Vec<String>>, String> {
     let pages = extract_pages(&bytes).map_err(|err| format!("解析 PDF《{path}》失败：{err}"))?;
 
     if pages.iter().all(|page| page.trim().is_empty()) {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(windows, target_os = "macos"))]
         return Err(format!("PDF《{path}》没有识别到可读取的正文（共 {} 页）", pages.len()));
-        #[cfg(not(target_os = "macos"))]
-        return Err("没有可提取的文字，扫描版 PDF 的离线 OCR 目前仅支持 macOS".into());
+        #[cfg(not(any(windows, target_os = "macos")))]
+        return Err("没有可提取的文字，扫描版 PDF 的离线 OCR 需要 Windows 或 macOS".into());
     }
 
     let pages = Arc::new(pages);

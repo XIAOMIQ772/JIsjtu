@@ -36,10 +36,12 @@ libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 base64 = "0.22.1"
-windows = { version = "0.62.2", features = ["Data_Pdf", "Data_Xml_Dom", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams", "UI_Notifications", "Win32_System_WinRT"] }
+jpeg-encoder = "0.6"
+pdfium-render = { version = "=0.9.6", default-features = false, features = ["pdfium_8125", "thread_safe"] }
+windows = { version = "0.62.2", features = ["Data_Xml_Dom", "UI_Notifications", "Win32_System_WinRT"] }
 windows-sys = { version = "0.61.2", features = ["Win32_System_Com", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
-[target.'cfg(not(target_os = "macos"))'.dependencies]
+[target.'cfg(not(any(windows, target_os = "macos")))'.dependencies]
 pdf-extract = "0.7"
 
 [build-dependencies]

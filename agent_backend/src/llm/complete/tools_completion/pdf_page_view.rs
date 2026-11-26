@@ -17,7 +17,10 @@ fn page_jpeg(path: &str, page: usize) -> Result<String, String> {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(windows)]
+use super::pdf_windows::page_jpeg;
+
+#[cfg(any(windows, target_os = "macos"))]
 pub(super) async fn inspect(path: String, value: &serde_json::Value) -> Result<String, String> {
     use async_openai::types::chat::{
         ChatCompletionRequestMessageContentPartImage, ChatCompletionRequestMessageContentPartText,
@@ -49,7 +52,7 @@ pub(super) async fn inspect(path: String, value: &serde_json::Value) -> Result<S
     Ok(format!("[第 {page} 页原图转录]\n{}", reply.text))
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub(super) async fn inspect(_: String, _: &serde_json::Value) -> Result<String, String> {
-    Err("当前平台支持读取 PDF 的文字层，原页看图功能需要 macOS。请按标记页码核对原件。".into())
+    Err("当前平台支持读取 PDF 的文字层，原页看图功能需要 Windows 或 macOS。请按标记页码核对原件。".into())
 }
