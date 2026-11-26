@@ -6,6 +6,7 @@ from pathlib import Path
 import pty
 import select
 import socket
+import stat
 import struct
 import subprocess
 import tempfile
@@ -74,11 +75,17 @@ with tempfile.TemporaryDirectory(prefix="jisjtu-package-") as temporary:
         assert not any(forbidden.intersection(Path(name).parts) for name in names), "Private/runtime files must not be distributed"
         assert not any(Path(name).is_absolute() or ".." in Path(name).parts for name in names)
         package.extractall(unpacked)
-    extracted = unpacked if (unpacked / "install.sh").is_file() else unpacked / archive.stem
-    assert {path.name for path in extracted.iterdir()} == {
-        "install.sh", "agent", "agent_frontend", "skills", "README.md", "LICENSE",
-        ".env.example", "requirements-sso.txt",
-    }
+        extracted = unpacked if (unpacked / "install.sh").is_file() else unpacked / archive.stem
+        executables = {"agent", "install.sh"}
+        if os.uname().sysname == "Darwin":
+            executables.add("Install.command")
+        assert {path.name for path in extracted.iterdir()} == executables | {
+            "agent_frontend", "skills", "README.md", "LICENSE", ".env.example", "requirements-sso.txt",
+        }
+        for name in executables:
+            entry = (extracted / name).relative_to(unpacked).as_posix()
+            mode = package.getinfo(entry).external_attr >> 16
+            assert stat.S_ISREG(mode) and mode & stat.S_IXUSR, f"{entry} must be executable in the ZIP"
     assert (extracted / "install.sh").read_bytes() == (repo.parent / "install.sh").read_bytes(), "Root and packaged installers must stay in sync"
     assert (extracted / ".env.example").read_bytes() == (repo / ".env.example").read_bytes()
     assert (extracted / "requirements-sso.txt").read_bytes() == (repo / "requirements-sso.txt").read_bytes()

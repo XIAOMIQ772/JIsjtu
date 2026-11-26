@@ -43,7 +43,14 @@ chmod 755 "$package_dir/agent"
 for asset in index.html style.css app.js; do
     cp "$frontend_dir/$asset" "$package_dir/agent_frontend/$asset"
 done
-cp -R "$skills_dir/." "$package_dir/skills/"
+if [ -n "${AGENT_PACKAGE_SKILLS_DIR:-}" ]; then
+    cp -R "$skills_dir/." "$package_dir/skills/"
+else
+    for skill in course-selection-research email-to-teacher exam-review-plan lecture-notes sjtu-campus-guide weekly-study-plan; do
+        mkdir "$package_dir/skills/$skill"
+        cp "$skills_dir/$skill/SKILL.md" "$package_dir/skills/$skill/"
+    done
+fi
 cp "$repo_dir/.env.example" "$package_dir/.env.example"
 cp "$repo_dir/requirements-sso.txt" "$package_dir/requirements-sso.txt"
 cp "$repo_dir/packaging/README.md" "$package_dir/README.md"
@@ -51,6 +58,10 @@ cp "$project_dir/LICENSE" "$package_dir/LICENSE"
 sed -e "s/@PACKAGE_OS@/$package_os/g" -e "s/@PACKAGE_ARCH@/$package_arch/g" -e "s/@PACKAGE_TARGET@/$host/g" \
     "$repo_dir/packaging/install.sh" > "$package_dir/install.sh"
 chmod 755 "$package_dir/install.sh"
+if [ "$package_os" = Darwin ]; then
+    cp "$repo_dir/packaging/Install.command" "$package_dir/Install.command"
+    chmod 755 "$package_dir/Install.command"
+fi
 (cd "$stage" && zip -X -q -r "$package_name.zip" "$package_name")
 (cd "$package_dir" && zip -X -q -r "$stage/JIsjtu.zip" .)
 mv -f "$stage/$package_name.zip" "$repo_dir/dist/$package_name.zip"

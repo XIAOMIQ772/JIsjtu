@@ -1,74 +1,87 @@
-# JIsjtu · 安装与升级
+# JIsjtu · 交我集新手指南
 
-本包包含已编译的程序，无需安装 Rust 或 Node.js。安装脚本会检查系统和处理器架构是否匹配；仓库首页的 `JIsjtu.zip` 适用于 Apple Silicon Mac。
+交我集是上海交通大学学生的校园助手。仓库提供的 `JIsjtu.zip` 含有适用于 Apple M 系列芯片 Mac 的编译版。可以在苹果菜单的「关于本机」里查看芯片型号。
 
-## 安装
+## 第一次使用
 
-在解压后的目录打开终端，运行：
+### 1. 双击安装
 
-```sh
-sh install.sh
-```
+双击 `JIsjtu.zip` 解压，打开解压出的文件夹，双击 **Install.command**。终端显示「安装完成」后，首次安装会尝试用「文本编辑」打开你的个人配置文件 `.env`。
 
-无需 sudo。程序安装到 `~/.local/share/JIsjtu`，命令安装到 `~/.local/bin/JIsjtu`。脚本会为 zsh / bash 注册 PATH；安装后新开一个终端即可使用。
-
-编辑配置文件：
+也可以在解压目录的终端运行 `sh install.sh`。要手动打开或再次编辑配置，在 Mac 上按 ⌘ 空格搜索「终端」，粘贴下面的命令并按回车。
 
 ```sh
-vim ~/.local/share/JIsjtu/.env
+open -e ~/.local/share/JIsjtu/.env
 ```
 
-对话功能必填 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`MODEL`。按需填写 `CANVAS_API_TOKEN`、jAccount 账号密码和邮箱配置。配置示例随包提供为 `.env.example`，安装器在首次安装时复制为个人 `.env`。
+如果 Mac 提示“无法验证开发者”，先确认 ZIP 来自你信任的发布者，再按提示处理这次打开请求。[Apple 关于打开下载软件的说明](https://support.apple.com/zh-cn/102445)
 
-## 浏览器与 jAccount 登录
+### 2. 填写模型服务
 
-网页操作需要 Python 3.10+ 和 Edge、Chrome 或 Chromium，程序优先使用 Edge。jAccount 自动登录还需要本地 OCR 依赖。
+在文件开头找到以下三项，把等号右侧换成你自己的值。API 密钥在模型服务商的控制台创建，模型 ID 从同一服务商对你的账号开放的模型列表中复制。模型需支持流式 Chat Completions 和工具调用。
 
-可以创建独立的 Python 环境并安装依赖：
+```dotenv
+OPENAI_API_KEY=填入你的API密钥
+OPENAI_BASE_URL=https://api.openai.com/v1
+MODEL=填入可用的模型ID
+```
+
+上面的基础地址以 OpenAI 为例。使用其他兼容服务时，填写该服务商提供的 API 基础地址，程序会自行拼接 `/chat/completions`。按 **⌘S** 保存。只想先体验对话时，校园账号可以留空。
+
+### 3. 启动并提问
+
+新开一个终端窗口，输入下面的命令并按回车。
+
+```sh
+JIsjtu
+```
+
+看到输入框后，试着问“现在北京时间几点？”并按回车。输入 `/resume` 可以打开历史对话。使用期间保持终端开启，按 `Ctrl+C` 退出。以后修改配置，退出后再启动即可生效。
+
+如果终端提示 `command not found`，可直接运行 `~/.local/bin/JIsjtu`。想用浏览器聊天，运行 `JIsjtu --web`，默认地址是 `http://127.0.0.1:13376`。用 `JIsjtu --doctor` 可检查模型接口、Canvas 令牌和邮箱等配置。
+
+## 按需连接校园服务
+
+继续编辑同一份 `.env`，按要使用的功能填写。
+
+| 想做什么 | 填哪些配置 |
+| --- | --- |
+| 查 Canvas 作业、读课件、提交作业 | 在交大 Canvas 的「账户 → 设置」创建访问令牌，填入 `CANVAS_API_TOKEN`。可以问“这周还有哪些作业没交？” |
+| 查老师评分、作业量、往年是否点名 | 在 `JCOURSE_EMAIL` 填选课社区的账号前缀或完整的 `@sjtu.edu.cn` 邮箱，在 `JCOURSE_PASSWORD` 填该社区的独立密码。可以问“数据结构哪位老师作业少？给我看看点评。” |
+| 查教务课表、考试或水源帖子 | `EMAIL_USER_ACCOUNT` 填 jAccount 账号或交大邮箱，`EMAIL_USER_PASSWORD` 填 jAccount 登录密码，再完成下方的浏览器设置。 |
+| 收发交大邮件 | `EMAIL_USER_ACCOUNT` 填交大邮箱。收件填 `IMAP_HOST=mail.sjtu.edu.cn`、`IMAP_PORT=993`，独立邮箱密码或客户端授权码填 `IMAP_PASSWORD`。发件默认使用 `mail.sjtu.edu.cn:465`，单独的发件授权码填 `SMTP_PASSWORD`。[学校邮箱服务器参数](https://net.sjtu.edu.cn/info/1191/2699.htm) |
+
+收件密码留空时沿用 `EMAIL_USER_PASSWORD`，发件密码留空时依次使用 `IMAP_PASSWORD`、`EMAIL_USER_PASSWORD`。让助手代发邮件或水源帖子时，核对预览后，在同一对话输入预览里的确认口令。要审阅 Canvas 作业再交，可以先看提交预览，在同一对话 30 分钟内回复“提交”。
+
+### 教务与水源的浏览器设置
+
+准备 Edge、Chrome 或 Chromium 和 Python 3.10 或更高版本。在终端运行以下两条命令，为交我集安装浏览器连接和验证码识别依赖。
 
 ```sh
 python3 -m venv ~/.local/share/JIsjtu/.venv
 ~/.local/share/JIsjtu/.venv/bin/python -m pip install -r ~/.local/share/JIsjtu/requirements-sso.txt
 ```
 
-在安装目录的 `.env` 中添加：
+在个人 `.env` 另起一行填写以下设置，保存后运行 `JIsjtu --sso-login` 检查 jAccount 登录。
 
 ```dotenv
 AGENT_SSO_PYTHON=./.venv/bin/python
 ```
 
-启动器会先进入安装目录，所以这个相对路径可以直接使用。已有可用的 Python 环境时，也可将 `AGENT_SSO_PYTHON` 设为其解释器的绝对路径。依赖安装需要联网，浏览器和 Python 本身不包含在 ZIP 中。
+启动器从安装目录运行，相对路径会指向刚创建的环境。程序默认在后台登录，再次查询时复用已保存的会话。要跳过启动时的 jAccount 检查，可设 `AGENT_SSO_AUTO_LOGIN=0`。遇到需要手动验证的登录页，可暂设 `AGENT_SSO_HEADLESS=0`，重新运行 `JIsjtu --sso-login`。
 
-`EMAIL_USER_ACCOUNT` 填 jAccount 账号或交大邮箱，`EMAIL_USER_PASSWORD` 填 jAccount 登录密码；邮箱客户端授权码单独填 `IMAP_PASSWORD`。
+### 上课、作业和签到提醒
 
-要查选课评价，请在安装目录的 `.env` 中单独填写 `JCOURSE_EMAIL`（账号前缀或完整交大邮箱）和 `JCOURSE_PASSWORD`（选课社区密码）。重开后可以直接问“数据结构哪位老师作业少？”或“这位老师往年会点名吗？”
+运行期间，macOS 可以在上课前 10 分钟、未完成作业截止前 1 小时发出通知。课表提醒使用已登录的教务会话，作业提醒使用 Canvas 令牌。设置 `AGENT_REMINDERS=0` 可以关闭这两类提醒。
 
-程序默认在后台登录和查询网页，任务结束后回收临时浏览器，保存的登录状态仍可复用。`AGENT_SSO_AUTO_LOGIN=0` 可跳过启动登录，`AGENT_SSO_HEADLESS=0` 可显示登录过程供手动验证或调试。
+要监看一节课的实时签到，可以说“帮我盯明天 8 点的大学物理有没有发起签到”。这需要 Python 3、Canvas 令牌，且课程菜单已开放「点名签到」。从课前 10 分钟至上课后 5 分钟，保持 Mac 唤醒并运行交我集，助手每 30 秒检查一次，有新记录就通知。
 
-## 使用
+## 会话、安装位置和升级
 
-```sh
-JIsjtu              # 默认启动终端界面，输入 /resume 打开历史会话
-JIsjtu --web        # 启动网页界面，默认地址 http://127.0.0.1:13376
-JIsjtu web          # 与 --web 相同
-JIsjtu --tui        # 显式启动终端界面
-JIsjtu --sso-login  # 单独检查或登录 jAccount
-JIsjtu --config     # 显示个人配置文件位置
-JIsjtu --help       # 查看帮助
-```
+- 在 `/resume` 列表中用 ↑ / ↓ 选择会话，回车打开。删除时按 `d` 或 Delete，核对标题后按 `y` 确认，按 `n` 或 Esc 取消。
+- 程序和这份指南默认安装在 `~/.local/share/JIsjtu`。用 `JIsjtu --config` 查看个人配置文件的位置。自定义技能可放在安装目录的 `skills/<名字>/SKILL.md`，重启后加载。
+- 升级时先退出交我集，解压新版 ZIP，再次双击 `Install.command` 或在解压目录运行 `sh install.sh`。安装器保留个人配置、历史会话、登录状态和自行添加的技能。新版本增加的配置项可在安装目录的 `.env.example` 中查看。安装完成后可以删除 ZIP 和解压文件夹。
+- 使用自定义安装位置时，从解压目录运行 `sh install.sh --prefix /绝对路径`。`--no-path` 跳过写入 shell 配置，`--profile /文件路径` 指定写入位置。HTTP 和 TCP 默认监听本机的 `127.0.0.1`。
+- 使用单独构建的 Linux 包时，在解压目录运行 `sh install.sh`，然后用文本编辑器打开 `~/.local/share/JIsjtu/.env`，从本指南第 2 步继续。
 
-运行时保持终端打开，按 Ctrl+C 停止服务。修改 `.env` 后重启生效。技能可以放入安装目录的 `skills/<名字>/SKILL.md`，新增后重启加载。
-
-在 `/resume` 的列表中用 ↑ / ↓ 选中会话，按 `d` 或 Delete，核对标题后按 `y` 永久删除。`n` 或 Esc 取消。
-
-HTTP 和 TCP 默认只监听 `127.0.0.1`。仅在受控网络中需要共享时设置 `AGENT_BIND_ADDR` 为指定网卡的 IP。`0.0.0.0` 会在所有 IPv4 网卡开放两个未认证的服务端口。
-
-在聊天中可以要求下载整门课程的课件、识别扫描版 PDF、代发校园邮件或水源帖子。发送前可核对完整草稿，然后在同一会话回复预览中的确认口令。macOS 版在运行期间会提醒即将开始的课和即将截止的作业，可在 `.env` 设置 `AGENT_REMINDERS=0` 关闭。
-
-想盯签到时，可说“帮我看明天 8 点的大学物理有没有发起签到”。请在课前 10 分钟到上课后 5 分钟期间保持 Mac 唤醒并运行 JIsjtu。程序每 30 秒查看该课的签到记录，发现后发送 macOS 通知。
-
-## 升级
-
-退出正在运行的 JIsjtu，解压新版 ZIP，再次运行 `sh install.sh`。升级会替换程序、前端和随包技能，并保留个人 `.env`、`sessions/`、`.sso/` 和自行添加的技能。新增配置项可参考安装目录中更新后的 `.env.example`。升级后重新启动 JIsjtu。
-
-安装完成后可以删除解压目录和 ZIP。自定义安装位置可运行 `sh install.sh --prefix /绝对路径`；`--no-path` 跳过修改 shell 配置，`--profile /文件路径` 指定 PATH 配置文件。
+更多校园功能和配置选项见[项目首页](https://github.com/XIAOMIQ772/JIsjtu)。

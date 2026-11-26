@@ -8,18 +8,12 @@
 
 ## 快速开始
 
-仓库中的 [JIsjtu.zip](JIsjtu.zip) 适用于 **Apple Silicon Mac（arm64）**。下载并解压，在解压目录运行下面的命令。
+仓库中的 [JIsjtu.zip](JIsjtu.zip) 适用于 **Apple Silicon Mac（M 系列）**。解压后双击 `Install.command`，安装器会把程序装到 `~/.local/share/JIsjtu`，并在 `~/.local/bin` 注册 `JIsjtu` 命令。也可在解压目录的终端运行 `sh install.sh`。
+
+首次双击安装成功后，安装器会尝试用「文本编辑」打开个人配置文件。也可以随时在终端运行下面的命令打开它。
 
 ```sh
-sh install.sh
-```
-
-脚本不需要 sudo，会将程序和前端安装到 `~/.local/share/JIsjtu`，在 `~/.local/bin` 注册 `JIsjtu` 命令，并配置 zsh / bash 的 PATH。重复安装保留已有 `.env`。安装完成后可以删除解压目录。
-
-首次安装后，用文本编辑器打开配置文件。
-
-```sh
-vim ~/.local/share/JIsjtu/.env
+open -e ~/.local/share/JIsjtu/.env
 ```
 
 对话需要填写 `OPENAI_BASE_URL`、`OPENAI_API_KEY` 和 `MODEL`。模型服务需支持流式 Chat Completions 和工具调用。校园账号按要用的功能填写，保存后新开一个终端启动助手。
@@ -29,6 +23,8 @@ JIsjtu
 ```
 
 在终端输入 `/` 可打开命令面板。`/resume` 打开历史会话，`/today` 看今日简报，`/ddl` 汇总作业截止，`/week` 看本周课表。网页模式的默认地址是 `http://127.0.0.1:13376`。保持终端运行，按 `Ctrl+C` 退出。用 `JIsjtu --config` 查看配置文件路径，修改配置或升级后重启生效。
+
+包内 `README.md` 附有从安装到第一次提问的教程，也说明了怎样接入 Canvas、教务和选课社区。升级时重新运行安装器即可，个人配置和历史会话会保留。[随包教程](agent_backend/packaging/README.md)
 
 ## 配置
 
@@ -208,7 +204,9 @@ cargo run --locked           # 默认 TUI
 sh scripts/package.sh
 ```
 
-输出 `agent_backend/dist/JIsjtu-<平台>.zip`，同时更新仓库根目录的 `JIsjtu.zip` 和 `install.sh`。安装包包含后端程序、前端、技能、安装说明、`.env.example`、SSO 依赖清单和许可证，不包含个人配置、Cookie 或会话。安装脚本统一由 `agent_backend/packaging/install.sh` 生成；根目录脚本也可以直接从仓库安装已有的 release。
+输出 `agent_backend/dist/JIsjtu-<平台>.zip`，同时更新仓库根目录的 `JIsjtu.zip` 和 `install.sh`。默认包包含编译好的程序、网页界面、上表中的六项校园技能、新手教程、`.env.example`、SSO 依赖清单和许可证。macOS 包另外提供可双击的 `Install.command`。压缩包内的 `install.sh` 和仓库根目录的安装脚本由同一模板生成，根目录脚本也可安装本机已构建的 release。
+
+如需分发自己的技能集，将 `AGENT_PACKAGE_SKILLS_DIR` 设为该目录的路径，打包时会一并复制其中的技能和参考文件。
 
 已有经过验证的当前平台 release 时，可直接打包该文件：
 
