@@ -222,8 +222,7 @@ pub(crate) async fn consume_confirmation(prompt: &str) -> Option<Result<String, 
 }
 
 async fn deliver_mail(to: &str, subject: &str, body: &str) -> Result<String, String> {
-    let python = std::env::var_os("AGENT_SSO_PYTHON").unwrap_or_else(|| "python3".into());
-    let mut child = Command::new(python)
+    let mut child = Command::new(crate::sso::python())
         .args(["-I", "-c", include_str!("smtp_send.py")])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

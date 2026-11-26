@@ -65,11 +65,7 @@ impl CanvasFile {
     /// （如 "01.+%E8%AF%BE%E7%A8%8B%E7%AE%80%E4%BB%8B.pdf"），直接当路径会写出一串乱码。
     pub(super) fn local_name(&self) -> String {
         let decoded = percent_decode(self.name());
-        Path::new(&decoded)
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .filter(|name| !name.is_empty())
-            .unwrap_or_else(|| format!("canvas-file-{}", self.id))
+        super::downloads::file_name(&decoded, format!("canvas-file-{}", self.id))
     }
 
     pub(super) fn human_size(&self) -> String {
@@ -195,21 +191,25 @@ fn pick_file<'a>(files: &'a [CanvasFile], target: &str) -> Result<&'a CanvasFile
     }
 }
 
-fn downloads_dir() -> PathBuf {
-    std::env::var("HOME")
-        .map(|home| PathBuf::from(home).join("Downloads"))
-        .unwrap_or_else(|_| PathBuf::from("."))
+#[cfg(windows)]
+fn open_with_system(path: &Path) -> Result<(), String> {
+    use std::{os::windows::ffi::OsStrExt, ptr};
+    use windows_sys::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL};
+
+    let absolute = std::path::absolute(path).map_err(|err| err.to_string())?;
+    let wide: Vec<u16> = absolute.as_os_str().encode_wide().chain(Some(0)).collect();
+    // Pass the document to the default file association as a path, without cmd.exe.
+    let result = unsafe {
+        ShellExecuteW(ptr::null_mut(), ptr::null(), wide.as_ptr(), ptr::null(), ptr::null(), SW_SHOWNORMAL)
+    } as isize;
+    if result > 32 { Ok(()) } else { Err(format!("系统无法打开文件（ShellExecuteW 返回 {result}）")) }
 }
 
+#[cfg(not(windows))]
 fn open_with_system(path: &Path) -> Result<(), String> {
     let target = path.to_string_lossy().into_owned();
     let (program, args): (&str, Vec<String>) = if cfg!(target_os = "macos") {
         ("open", vec![target])
-    } else if cfg!(target_os = "windows") {
-        (
-            "cmd",
-            vec!["/C".to_string(), "start".to_string(), String::new(), target],
-        )
     } else {
         ("xdg-open", vec![target])
     };
@@ -392,7 +392,10 @@ pub(super) async fn course_files(arguments: serde_json::Value) -> Result<String,
         let segment = course_segment(course_id)?;
         let dir = requested_path
             .map(PathBuf::from)
-            .unwrap_or_else(|| downloads_dir().join(format!("Canvas-{segment}")));
+            .unwrap_or_else(|| {
+                let folder = super::downloads::file_name(&format!("Canvas-{segment}"), "Canvas".into());
+                super::downloads::directory().join(folder)
+            });
         return download_all(&client, &token, &files, &dir).await;
     }
     if action != "download" && action != "open" {
@@ -407,7 +410,7 @@ pub(super) async fn course_files(arguments: serde_json::Value) -> Result<String,
     let file = pick_file(&files, target)?;
     let path = requested_path
         .map(PathBuf::from)
-        .unwrap_or_else(|| downloads_dir().join(file.local_name()));
+        .unwrap_or_else(|| super::downloads::directory().join(file.local_name()));
 
     let mut report = download_file(&client, &token, file, &path).await?;
     report.push_str(&format!(

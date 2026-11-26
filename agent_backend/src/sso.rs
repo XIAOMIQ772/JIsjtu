@@ -15,6 +15,25 @@ const BROWSER_HELPER: &str = include_str!("./sso/browser.py");
 const PROCESS_GUARD: &str = include_str!("./sso/process_guard.py");
 static BROWSER_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
+pub(crate) fn python() -> String {
+    if let Ok(configured) = std::env::var("AGENT_SSO_PYTHON") {
+        if !configured.trim().is_empty() {
+            return configured;
+        }
+    }
+    #[cfg(windows)]
+    {
+        let installed = std::env::current_exe().ok()
+            .and_then(|exe| Some(exe.parent()?.join(".venv/Scripts/python.exe")));
+        if let Some(path) = installed.filter(|path| path.is_file()) {
+            return path.to_string_lossy().into_owned();
+        }
+        "python".into()
+    }
+    #[cfg(not(windows))]
+    { "python3".into() }
+}
+
 #[derive(Deserialize)]
 struct HelperResult {
     ok: bool,
@@ -99,7 +118,6 @@ async fn run_helper(
     requests: Value,
 ) -> anyhow::Result<HelperResult> {
     let _guard = BROWSER_LOCK.get_or_init(|| Mutex::new(())).lock().await;
-    let python = std::env::var_os("AGENT_SSO_PYTHON").unwrap_or_else(|| "python3".into());
     let request = json!({
         "action": action,
         "account": account,
@@ -113,9 +131,12 @@ async fn run_helper(
         "headless": action == "cached_fetch" || (action != "open"
             && std::env::var("AGENT_SSO_HEADLESS").as_deref() != Ok("0")),
     });
-    let mut command = Command::new(python);
+    // The embedded source exceeds the Windows process command-line limit.
+    // Read that exact byte prefix first. The remaining stdin is the JSON request.
+    let mut command = Command::new(python());
     command
-        .args(["-c", BROWSER_HELPER])
+        .args(["-X", "utf8", "-c", "import sys; exec(sys.stdin.buffer.read(int(sys.argv[1])))"])
+        .arg(BROWSER_HELPER.len().to_string())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -137,6 +158,7 @@ async fn run_helper(
         .spawn()
         .context("无法启动本地 SSO 助手；请安装 Python 3，或用 AGENT_SSO_PYTHON 指定解释器")?;
     let mut stdin = child.stdin.take().context("无法打开 SSO 助手输入通道")?;
+    stdin.write_all(BROWSER_HELPER.as_bytes()).await?;
     stdin.write_all(&serde_json::to_vec(&request)?).await?;
     drop(stdin);
     let output = tokio::time::timeout(Duration::from_secs(100), child.wait_with_output())
@@ -211,7 +233,7 @@ pub async fn campus_fetch(entry: &str, requests: &[FetchRequest], limit: usize) 
 }
 
 /// Reminders only reuse an existing session. Never initiate a login or show a browser.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 pub async fn cached_campus_fetch(entry: &str, requests: &[FetchRequest], limit: usize) -> Result<Vec<FetchResponse>, String> {
     fetch_campus(entry, requests, limit, true).await
 }

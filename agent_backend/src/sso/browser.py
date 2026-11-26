@@ -151,6 +151,12 @@ class Cdp:
         await self.socket.close()
 
 
+def detached_options():
+    if os.name == "nt":
+        return {"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
 class BackgroundProcess:
     """The guardian owns/reaps Edge; losing this helper's pipe also stops it."""
 
@@ -159,9 +165,9 @@ class BackgroundProcess:
         self.pid = None
         source = source or Path(__file__).with_name("process_guard.py").read_text(encoding="utf-8")
         self.guard = subprocess.Popen(
-            [sys.executable, "-u", "-c", source], stdin=subprocess.PIPE,
+            [sys.executable, "-X", "utf8", "-u", "-c", source], stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0,
-            env=environment, start_new_session=True,
+            env=environment, **detached_options(),
         )
 
     async def start(self, profile):
@@ -265,7 +271,7 @@ class Browser:
                     await child.start(profile)
                 else:
                     child = subprocess.Popen(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                             stderr=subprocess.DEVNULL, env=environment, start_new_session=True)
+                                             stderr=subprocess.DEVNULL, env=environment, **detached_options())
                 deadline = time.monotonic() + 15
                 while time.monotonic() < deadline:
                     cdp = await Cdp.connect(profile)

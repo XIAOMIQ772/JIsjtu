@@ -63,6 +63,8 @@ document.querySelector('#submit-password-button').onclick = async () => {
 def captcha_png():
     image = Image.new("RGB", (140, 48), "white")
     fonts = ["/System/Library/Fonts/Supplemental/Arial.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]
+    if os.name == "nt":
+        fonts.insert(0, Path(os.environ["WINDIR"]) / "Fonts" / "arial.ttf")
     font = next((ImageFont.truetype(path, 36) for path in fonts if Path(path).is_file()), ImageFont.load_default())
     ImageDraw.Draw(image).text((10, 3), "1234", fill="black", font=font)
     output = io.BytesIO()
@@ -494,9 +496,11 @@ class SsoBrowserTests(unittest.IsolatedAsyncioTestCase):
         source = Path(sso.__file__)
         request = dict(self.config, action="read", url=self.origin + "/courses",
                        process_guard=source.with_name("process_guard.py").read_text())
+        code = source.read_bytes()
         result = await asyncio.to_thread(
-            subprocess.run, [sys.executable, "-c", source.read_text()],
-            input=json.dumps(request), text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            subprocess.run, [sys.executable, "-X", "utf8", "-c",
+                             "import sys; exec(sys.stdin.buffer.read(int(sys.argv[1])))", str(len(code))],
+            input=code + json.dumps(request).encode(), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             cwd=self.temporary.name, timeout=30,
         )
         self.assertEqual(result.returncode, 0, result.stdout)

@@ -81,9 +81,9 @@ async fn mail() -> Check {
 }
 
 async fn python() -> Check {
-    let python = env("AGENT_SSO_PYTHON").unwrap_or_else(|| "python3".into());
+    let python = crate::sso::python();
     let probe = tokio::process::Command::new(&python)
-        .args(["-c", "import sys, websockets, ddddocr; print(sys.executable)"])
+        .args(["-X", "utf8", "-c", "import sys, websockets, ddddocr; print(sys.executable)"])
         .stdin(std::process::Stdio::null())
         .output();
     match limited(probe).await {
@@ -113,6 +113,10 @@ fn which(name: &str) -> Option<PathBuf> {
     std::env::var_os("PATH").and_then(|paths| {
         std::env::split_paths(&paths)
             .map(|dir| dir.join(name))
+            .flat_map(|path| {
+                let exe = (cfg!(windows) && path.extension().is_none()).then(|| path.with_extension("exe"));
+                std::iter::once(path).chain(exe)
+            })
             .find(|path| path.is_file())
     })
 }
@@ -127,13 +131,22 @@ fn browser() -> Check {
             check(Level::Fail, "浏览器", format!("AGENT_SSO_BROWSER 指向的 {configured} 不存在"))
         };
     }
+    #[cfg(windows)]
+    let fixed: Vec<PathBuf> = ["Microsoft/Edge/Application/msedge.exe", "Google/Chrome/Application/chrome.exe"]
+        .into_iter()
+        .flat_map(|suffix| {
+            ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"].into_iter()
+                .filter_map(std::env::var_os)
+                .map(move |root| PathBuf::from(root).join(suffix))
+        })
+        .collect();
+    #[cfg(not(windows))]
     let fixed = [
-        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        PathBuf::from("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+        PathBuf::from("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
     ];
     let found = fixed
-        .iter()
-        .map(PathBuf::from)
+        .into_iter()
         .find(|path| path.is_file())
         .or_else(|| {
             ["microsoft-edge", "microsoft-edge-stable", "msedge", "google-chrome", "google-chrome-stable", "chromium", "chromium-browser"]

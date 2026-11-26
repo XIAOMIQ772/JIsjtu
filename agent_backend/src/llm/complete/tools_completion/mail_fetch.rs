@@ -338,15 +338,8 @@ fn attachment_target(name: &str, uid: u32, index: usize, save_path: Option<&str>
     if let Some(path) = save_path.map(str::trim).filter(|path| !path.is_empty()) {
         return std::path::PathBuf::from(path);
     }
-    let file = std::path::Path::new(name.trim())
-        .file_name()
-        .map(|file| file.to_string_lossy().into_owned())
-        .filter(|file| !file.is_empty() && file != "." && file != "..")
-        .unwrap_or_else(|| format!("mail-{uid}-attachment-{}", index + 1));
-    std::env::var("HOME")
-        .map(|home| std::path::PathBuf::from(home).join("Downloads"))
-        .unwrap_or_else(|_| std::path::PathBuf::from("."))
-        .join(file)
+    let file = super::downloads::file_name(name.trim(), format!("mail-{uid}-attachment-{}", index + 1));
+    super::downloads::directory().join(file)
 }
 
 fn mail_attachment(session: &mut MailSession, folder: &str, uid: u32, which: &str, save_path: Option<&str>) -> Result<String, String> {
@@ -541,8 +534,9 @@ mod tests {
         assert!(pick_attachment(&names, "4").unwrap_err().contains("1 到 3"));
         assert!(pick_attachment(&[], "1").unwrap_err().contains("没有附件"));
         let target = attachment_target("../../.ssh/authorized_keys", 7, 0, None);
-        assert!(target.ends_with("Downloads/authorized_keys"), "{}", target.display());
-        assert!(attachment_target("..", 7, 1, None).ends_with("Downloads/mail-7-attachment-2"));
+        let downloads = super::super::downloads::directory();
+        assert_eq!(target, downloads.join("authorized_keys"));
+        assert_eq!(attachment_target("..", 7, 1, None), downloads.join("mail-7-attachment-2"));
         assert_eq!(attachment_target("a.pdf", 7, 0, Some("/tmp/x.pdf")), std::path::PathBuf::from("/tmp/x.pdf"));
     }
 

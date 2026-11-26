@@ -19,7 +19,11 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
         function: (FunctionObject {
             name: "bash".to_string(),
             description: Some(
-                "在 bash 中执行命令，返回合并的 stdout/stderr。长时间任务放后台运行。".to_string(),
+                if cfg!(windows) {
+                    "在 Windows PowerShell 中执行命令，使用 PowerShell 语法，返回合并的 stdout/stderr。"
+                } else {
+                    "在 bash 中执行命令，返回合并的 stdout/stderr。长时间任务放后台运行。"
+                }.to_string(),
             ),
             parameters: Some(json!({
                 "type":"object",

@@ -198,9 +198,7 @@ pub(super) fn render_ics(name: &str, events: &[Event], now: DateTime<Utc>) -> St
 }
 
 fn default_path(term: TermCode) -> PathBuf {
-    std::env::var("HOME")
-        .map(|home| PathBuf::from(home).join("Downloads"))
-        .unwrap_or_else(|_| PathBuf::from("."))
+    super::downloads::directory()
         .join(format!("交我集-{}-{}.ics", term.xnm, term.season()))
 }
 

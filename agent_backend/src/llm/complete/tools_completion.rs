@@ -14,6 +14,7 @@ mod course_reviews;
 mod create_subagents;
 mod daily_brief;
 mod degree_progress;
+mod downloads;
 mod edit;
 mod eduinfo;
 mod export_calendar;
