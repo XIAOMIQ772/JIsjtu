@@ -1,19 +1,11 @@
 @echo off
 setlocal DisableDelayedExpansion
 pushd "%~dp0.." || exit /b 1
-if /i "%~1"=="--config" goto config
 if /i "%~1"=="--help" goto help
 ".\agent.exe" %*
 set "agent_status=%errorlevel%"
 popd
 exit /b %agent_status%
-
-:config
-setlocal EnableDelayedExpansion
-echo(!CD!\.env
-endlocal
-popd
-exit /b 0
 
 :help
 echo JIsjtu                   Start the terminal interface

@@ -32,6 +32,18 @@ const HOMEWORK_CLI_SESSION: &str = "--tool homework";
 
 #[tokio::main(worker_threads = 4)]
 async fn main() {
+    #[cfg(windows)]
+    if std::env::args().nth(1).is_some_and(|arg| arg.eq_ignore_ascii_case("--config")) {
+        // cmd.exe encodes piped echo output using its legacy code page.
+        match std::env::current_dir() {
+            Ok(dir) => println!("{}", dir.join(".env").display()),
+            Err(err) => {
+                eprintln!("无法定位配置目录：{err}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     if let Err(error) = dotenvy::dotenv() {
         eprintln!("提示：未加载 .env（{error}），将继续使用进程环境变量");
     }
