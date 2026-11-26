@@ -60,55 +60,10 @@ async fn homework_rejects_bad_arguments_before_touching_canvas() {
     assert!(error.contains("text"));
     let error = call("homework", json!({"action": "submit", "course_id": "1", "assignment_id": "2", "text": "x", "files": ["/tmp/a"]})).await.unwrap_err();
     assert!(error.contains("二选一"));
-    let error = call("homework", json!({"action": "submit", "course_id": "1", "assignment_id": "2", "files": ["/nonexistent/answer.pdf"]})).await.unwrap_err();
+    let error = super::super::outbound::SESSION.scope("missing-file".into(), call("homework", json!({"action": "submit", "course_id": "1", "assignment_id": "2", "files": ["/nonexistent/answer.pdf"]}))).await.unwrap_err();
     assert!(error.contains("不存在"));
     let output = call("homework", json!({"action": "questions", "text": "1. a\n2. b", "question": "2"})).await.unwrap();
     assert!(output.contains("2. b") && !output.contains("1. a"));
-}
-
-#[tokio::test]
-async fn homework_submits_directly_or_from_the_latest_preview() {
-    let file = std::env::temp_dir().join(format!("hw-gate-{}.txt", std::process::id()));
-    std::fs::write(&file, "answer v1").unwrap();
-    let pending = |course: &str| PendingSubmission {
-        course_id: course.to_string(),
-        assignment_id: "9".to_string(),
-        text: None,
-        files: vec![file.clone()],
-        files_digest: files_digest(&[file.clone()]).unwrap(),
-        comment: None,
-        created: std::time::Instant::now(),
-    };
-    let submit = |course: &str| json!({"action": "submit", "course_id": course, "assignment_id": "9", "confirm": true});
-    let has_pending = |course: &str| {
-        pending_submissions().lock().unwrap().iter().any(|item| item.is_for(course, "9"))
-    };
-    // 这些测试不联网：通过内容检查后会停在 Canvas 这一步（缺令牌或请求失败）。
-    let reached_canvas = |error: &str| !error.contains("没有可提交的内容") && !error.contains("预览后被修改");
-
-    // 没有预览也没带内容：无从提交
-    let error = call("homework", submit("gate-0")).await.unwrap_err();
-    assert!(error.contains("没有可提交的内容"), "{error}");
-
-    // 用户明确同意后，不带内容的 confirm=true 提交预览过的那份，且预览只用一次
-    pending_submissions().lock().unwrap().push(pending("gate-1"));
-    let error = call("homework", submit("gate-1")).await.unwrap_err();
-    assert!(reached_canvas(&error), "{error}");
-    assert!(!has_pending("gate-1"));
-    assert!(call("homework", submit("gate-1")).await.unwrap_err().contains("没有可提交的内容"));
-
-    // 用户一开始就说了直接交：confirm=true 带内容，无需预览
-    let mut direct = submit("gate-3");
-    direct["text"] = json!("直接提交的答案");
-    let error = call("homework", direct).await.unwrap_err();
-    assert!(reached_canvas(&error), "{error}");
-
-    // 预览后文件被改动则拒绝
-    pending_submissions().lock().unwrap().push(pending("gate-2"));
-    std::fs::write(&file, "answer v2").unwrap();
-    assert!(call("homework", submit("gate-2")).await.unwrap_err().contains("预览后被修改"));
-
-    let _ = std::fs::remove_file(&file);
 }
 
 #[tokio::test]

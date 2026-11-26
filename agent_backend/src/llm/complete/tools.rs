@@ -465,10 +465,8 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
                 "从 Canvas（course_id + assignment_id）、本地 PDF/Word/PowerPoint/文本（path）或文字（text）读取作业。\
                  questions 返回候选题号、页码、小问、共同说明和附件位置。按老师指定范围作答，长目录、长题或说明用 part 续读，单题用 question 指定。\
                  requirements 读取 Canvas 完整网页说明、评分细则和提交方式。按说明核对每个必做题、评分点和最终文件。\
-                 action=submit：text 为在线文本提交，files 为上传本地文件提交，二者只能选一。\
-                 用户已经明确说可以提交（如“写完直接交”“提交吧”）时，传 confirm=true 直接提交；\
-                 用户没有明确说要提交时，传 confirm=false 生成预览，系统会把预览直接展示给用户，\
-                 等用户回复同意后再用 confirm=true 提交预览过的那份内容。".to_string(),
+                 submit 提交在线答案 text 或上传文件 files，可传 required_files 核对老师明确要求单独上传的文件。用户明确要求写完直接交时，带内容和 confirm=true；\
+                 需要用户审阅时 confirm=false 生成预览，待同意后传相同的课程、作业、preview_id 和 confirm=true。".to_string(),
             ),
             parameters: Some(json!({
                 "type":"object",
@@ -515,13 +513,17 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
                         "type":"array","items":{"type":"string"},
                         "description":"submit：成品要求按题号作答时，传应当在答案中读到的原题号（如 2、5），工具会核对实际在线正文或 PDF、Word、文本里的标题。无编号的报告、代码等省略。"
                     },
+                    "preview_id":{
+                        "type":"string",
+                        "description":"确认先前预览时原样回传该次预览给出的编号，由助手从对话记录取回"
+                    },
                     "comment":{
                         "type":"string",
                         "description":"submit：附带给老师的留言，可选"
                     },
                     "confirm":{
                         "type":"boolean",
-                        "description":"submit：用户已明确同意提交时传 true，直接提交；否则传 false 只生成预览。预览后用户同意再传 true 时只需 course_id 与 assignment_id"
+                        "description":"submit：用户事先授权直接交时传 true 和答案。审阅后确认时传 true 和 preview_id；预览时传 false。"
                     }
                 },
                 "required":["action"],

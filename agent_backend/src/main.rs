@@ -28,6 +28,8 @@ fn frontend_dir() -> PathBuf {
     PathBuf::from("../agent_frontend")
 }
 
+const HOMEWORK_CLI_SESSION: &str = "--tool homework";
+
 #[tokio::main(worker_threads = 4)]
 async fn main() {
     if let Err(error) = dotenvy::dotenv() {
@@ -44,7 +46,13 @@ async fn main() {
             std::process::exit(2);
         };
         let input = arguments.get(index + 2).map(String::as_str).unwrap_or("{}");
-        match llm::complete::tool_calling(name, input).await {
+        let call = llm::complete::tool_calling(name, input);
+        let result = if name == "homework" {
+            llm::complete::tools_completion::outbound::SESSION.scope(HOMEWORK_CLI_SESSION.into(), call).await
+        } else {
+            call.await
+        };
+        match result {
             Ok(output) => println!("{output}"),
             Err(error) => {
                 eprintln!("{error:#}");

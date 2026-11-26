@@ -81,7 +81,8 @@ JIsjtu
 | 水源 | `get_hotnews` 热帖简报、`shuiyuan_search` 搜索、`shuiyuan_topic` 读帖子、`shuiyuan_post` 查看版块、发表主题或回帖 | 水源社区 |
 | 邮件 | `mail_fetch` 列出、阅读、搜索、下载附件，`send_email` 发送纯文本邮件 | 学校邮箱 |
 | 找课件、下载整门课 | `search_files` 跨课程搜索，`course_files` 的 `download_all` 下载指定课程中可访问的全部文件，默认目录为 `~/Downloads/Canvas-<课程id>`。文件名带 Canvas ID，重跑会跳过已有且大小匹配的文件 | Canvas |
-| 读课件、文档 | `pdf_analysis` 读取 PDF，在 macOS 上自动用 Vision 离线识别扫描页。`read_office` 读取 pptx（含讲者备注）、docx（含表格）和 xlsx | 本地文件 |
+| 读课件、文档 | macOS 上的 `pdf_analysis` 离线识别扫描页和混排截图。遇到需要看原图的公式或图表，`image_page` 会把指定的一页发给当前配置的模型。`read_office` 可读 Word 表格和公式、PowerPoint 讲者备注及 Excel 工作表 | 本地文件 |
+| 写作业、交作业 | `homework` 结合老师的说明、评分细则和附件读题，交前检查成品和必交文件。可以先看预览，也可以事先说“写完直接交”。确认后返回 Canvas 的提交时间和次数 | Canvas、本地文件 |
 | 上课、作业主动提醒 | 程序运行期间，macOS 在上课前 10 分钟、未完成作业截止前 1 小时发送通知。课表需要已登录的教务会话，作业需要 Canvas 令牌 | 教务系统、Canvas |
 | 盯一节课的签到 | 对小集说“帮我盯明早 8 点的大学物理有没有发起签到”。`watch_attendance` 为这一节课安排监看，在 Canvas「点名签到」里发现时段内的新记录就发 macOS 通知 | Canvas 课堂签到 |
 

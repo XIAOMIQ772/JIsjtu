@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex, OnceLock};
+use std::sync::LazyLock;
 
 use regex::Regex;
 
-use super::canvas::CANVAS_BASE;
+use super::canvas::{CANVAS_BASE, same_origin};
 use super::course_files::{CanvasFile, download_file};
 use super::office::document_pages;
 use super::pdf_analysis::load_pdf_pages;
@@ -287,6 +287,7 @@ async fn upload_submission_file(
     course_id: &str,
     assignment_id: &str,
     path: &Path,
+    bytes: Vec<u8>,
 ) -> Result<u64, String> {
     #[derive(serde::Deserialize)]
     struct UploadTicket {
@@ -295,9 +296,6 @@ async fn upload_submission_file(
         upload_params: serde_json::Map<String, serde_json::Value>,
     }
 
-    let bytes = tokio::fs::read(path)
-        .await
-        .map_err(|err| format!("读取 {} 失败: {err}", path.display()))?;
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -306,7 +304,7 @@ async fn upload_submission_file(
 
     let response = client
         .post(format!(
-            "https://oc.sjtu.edu.cn/api/v1/courses/{course_id}/assignments/{assignment_id}/submissions/self/files"
+            "{CANVAS_BASE}/api/v1/courses/{course_id}/assignments/{assignment_id}/submissions/self/files"
         ))
         .bearer_auth(token)
         .form(&[
@@ -380,7 +378,7 @@ async fn upload_submission_file(
         .map_err(|err| format!("上传 {name} 的确认地址无效（{location}）: {err}"))?;
 
     let confirm = client.get(location.clone());
-    let confirm = if location.host_str() == Some("oc.sjtu.edu.cn") {
+    let confirm = if same_origin(location.as_str(), CANVAS_BASE) {
         confirm.bearer_auth(token)
     } else {
         confirm
@@ -403,106 +401,7 @@ async fn upload_submission_file(
 
 /// 工具结果里这条分隔线之后的内容由聊天循环直接展示给用户，不进入模型上下文。
 pub const USER_NOTICE_MARK: &str = "\n<<<仅展示给用户>>>\n";
-const HOMEWORK_PREVIEW_MINUTES: u64 = 30;
-
-/// 一份待提交的内容。预览后保存在这里，用户同意后提交的就是预览过的这一份。
-struct PendingSubmission {
-    course_id: String,
-    assignment_id: String,
-    text: Option<String>,
-    files: Vec<PathBuf>,
-    files_digest: u64,
-    comment: Option<String>,
-    created: std::time::Instant,
-}
-
-impl PendingSubmission {
-    fn expired(&self) -> bool {
-        self.created.elapsed().as_secs() > HOMEWORK_PREVIEW_MINUTES * 60
-    }
-
-    fn kind(&self) -> &'static str {
-        if self.text.is_some() { "online_text_entry" } else { "online_upload" }
-    }
-
-    fn is_for(&self, course_id: &str, assignment_id: &str) -> bool {
-        self.course_id == course_id && self.assignment_id == assignment_id
-    }
-
-    /// 给用户看的内容说明：正文或文件清单，以及附言。
-    fn describe(&self) -> String {
-        let mut out = String::new();
-        if let Some(text) = &self.text {
-            out.push_str(&format!("\n提交内容（共 {} 字）：\n{text}\n", text.chars().count()));
-        }
-        for file in &self.files {
-            let size = std::fs::metadata(file).map(|meta| meta.len()).unwrap_or(0);
-            out.push_str(&format!("\n提交文件：{}（{size} 字节）", file.display()));
-        }
-        if let Some(comment) = &self.comment {
-            out.push_str(&format!("\n附言：{comment}\n"));
-        }
-        out
-    }
-}
-
-fn pending_submissions() -> &'static Mutex<Vec<PendingSubmission>> {
-    static PENDING: OnceLock<Mutex<Vec<PendingSubmission>>> = OnceLock::new();
-    PENDING.get_or_init(|| Mutex::new(Vec::new()))
-}
-
-/// 从本次调用的参数里读出要提交的内容；text 和 files 都没给时返回 None。
-fn submission_from_arguments(
-    arguments: &serde_json::Value,
-    course_id: &str,
-    assignment_id: &str,
-) -> Result<Option<PendingSubmission>, String> {
-    let text = homework_arg(arguments, "text");
-    let files: Vec<PathBuf> = arguments["files"]
-        .as_array()
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| item.as_str().map(str::trim).filter(|path| !path.is_empty()))
-                .map(PathBuf::from)
-                .collect()
-        })
-        .unwrap_or_default();
-    match (text.is_some(), files.is_empty()) {
-        (true, false) => return Err("text 和 files 只能二选一：Canvas 一次提交只能是在线文本或文件上传".to_string()),
-        (false, true) => return Ok(None),
-        _ => {}
-    }
-    for file in &files {
-        if !file.is_file() {
-            return Err(format!("文件 {} 不存在", file.display()));
-        }
-    }
-    artifact::check_required_files(arguments, &files)?;
-    let checked = files.iter().map(|path| artifact::inspect(path)).collect::<Result<Vec<_>, _>>()?;
-    artifact::check_required_questions(arguments, text, checked.iter())?;
-    Ok(Some(PendingSubmission {
-        course_id: course_id.to_string(),
-        assignment_id: assignment_id.to_string(),
-        text: text.map(str::to_string),
-        files_digest: files_digest(&files)?,
-        files,
-        comment: homework_arg(arguments, "comment").map(str::to_string),
-        created: std::time::Instant::now(),
-    }))
-}
-
-fn files_digest(files: &[PathBuf]) -> Result<u64, String> {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for file in files {
-        file.hash(&mut hasher);
-        std::fs::read(file)
-            .map_err(|err| format!("读取 {} 失败: {err}", file.display()))?
-            .hash(&mut hasher);
-    }
-    Ok(hasher.finish())
-}
+mod submission;
 
 fn check_submittable(assignment: &HomeworkAssignment, kind: &str, files: &[PathBuf]) -> Result<(), String> {
     if assignment.locked_for_user {
@@ -538,126 +437,11 @@ fn check_submittable(assignment: &HomeworkAssignment, kind: &str, files: &[PathB
     Ok(())
 }
 
-async fn preview_homework(arguments: &serde_json::Value, course_id: &str, assignment_id: &str) -> Result<String, String> {
-    let submission = submission_from_arguments(arguments, course_id, assignment_id)?
-        .ok_or_else(|| "请提供要提交的内容：text（在线文本）或 files（本地文件路径）".to_string())?;
-    let kind = submission.kind();
-
-    let token = canvas_token()?;
-    let client = reqwest::Client::new();
-    let assignment = fetch_homework_assignment(&client, &token, course_id, assignment_id).await?;
-    check_submittable(&assignment, kind, &submission.files)?;
-
-    let notice = format!(
-        "【作业提交预览，尚未提交】\n{}本次提交方式：{kind}\n{}\n请核对以上内容。确认无误后回复“提交”即可；不回复则不会提交。",
-        assignment.summary(),
-        submission.describe()
-    );
-    {
-        let mut pending = pending_submissions().lock().unwrap();
-        // 同一作业只保留最新一次预览
-        pending.retain(|old| !old.expired() && !old.is_for(course_id, assignment_id));
-        pending.push(submission);
-    }
-
-    Ok(format!(
-        "提交预览已由系统直接展示给用户，作业尚未提交。\
-         请简短提醒用户核对预览，然后结束本轮回答，等待用户回复。\
-         用户明确表示可以提交后，用 action=submit、confirm=true 和相同的 course_id、assignment_id 提交，\
-         不必再传内容，届时提交的就是预览过的这一份。用户没有明确同意前不要提交。\
-         如需修改内容，请重新预览。{USER_NOTICE_MARK}{notice}"
-    ))
-}
-
-async fn submit_homework(arguments: &serde_json::Value) -> Result<String, String> {
-    let course_id = homework_arg(arguments, "course_id")
-        .ok_or_else(|| "提交作业需要 course_id".to_string())?;
-    let assignment_id = homework_arg(arguments, "assignment_id")
-        .ok_or_else(|| "提交作业需要 assignment_id，可由 get_exam 获取".to_string())?;
-    // confirm=true 表示用户已经明确同意提交；否则只生成预览，请用户过目。
-    if arguments["confirm"].as_bool() != Some(true) {
-        return preview_homework(arguments, course_id, assignment_id).await;
-    }
-
-    // 这次调用带了内容就直接交这份；没带内容就交之前预览过的那份。
-    let fresh = submission_from_arguments(arguments, course_id, assignment_id)?;
-    let submission = {
-        let mut pending = pending_submissions().lock().unwrap();
-        pending.retain(|submission| !submission.expired());
-        let previewed = pending
-            .iter()
-            .position(|submission| submission.is_for(course_id, assignment_id))
-            .map(|position| pending.remove(position));
-        fresh.or(previewed).ok_or_else(|| {
-            "没有可提交的内容：请传入 text 或 files；这份作业也没有仍然有效的预览".to_string()
-        })?
-    };
-    if files_digest(&submission.files)? != submission.files_digest {
-        return Err("提交文件在预览后被修改，作业未提交，请重新预览并让用户确认".to_string());
-    }
-
-    let kind = submission.kind();
-    let token = canvas_token()?;
-    let client = reqwest::Client::new();
-    let assignment = fetch_homework_assignment(&client, &token, course_id, assignment_id).await?;
-    check_submittable(&assignment, kind, &submission.files)?;
-
-    let mut form: Vec<(&str, String)> = vec![("submission[submission_type]", kind.to_string())];
-    if let Some(text) = &submission.text {
-        form.push(("submission[body]", text_to_html(text)));
-    }
-    for file in &submission.files {
-        let id = upload_submission_file(&client, &token, course_id, assignment_id, file).await?;
-        form.push(("submission[file_ids][]", id.to_string()));
-    }
-    if let Some(comment) = &submission.comment {
-        form.push(("comment[text_comment]", comment.clone()));
-    }
-
-    let response = client
-        .post(format!(
-            "https://oc.sjtu.edu.cn/api/v1/courses/{course_id}/assignments/{assignment_id}/submissions"
-        ))
-        .bearer_auth(&token)
-        .form(&form)
-        .send()
-        .await
-        .map_err(|err| format!("提交作业失败: {err}"))?;
-    if !response.status().is_success() {
-        return Err(canvas_failure(response, "提交作业").await);
-    }
-    let result: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|err| format!("解析提交结果失败: {err}"))?;
-
-    let mut report = format!("已提交作业「{}」，提交方式：{kind}\n", assignment.name);
-    for file in &submission.files {
-        report.push_str(&format!("文件：{}\n", file.display()));
-    }
-    if let Some(text) = &submission.text {
-        report.push_str(&format!("在线文本共 {} 字\n", text.chars().count()));
-    }
-    if let Some(time) = result["submitted_at"].as_str() {
-        report.push_str(&format!("提交时间：{time}\n"));
-    }
-    if let Some(attempt) = result["attempt"].as_u64() {
-        report.push_str(&format!("第 {attempt} 次提交\n"));
-    }
-    if result["late"].as_bool() == Some(true) {
-        report.push_str("注意：本次提交已被标记为迟交\n");
-    }
-    if let Some(url) = result["preview_url"].as_str() {
-        report.push_str(&format!("查看：{url}\n"));
-    }
-    Ok(report)
-}
-
 pub(super) async fn homework(arguments: serde_json::Value) -> Result<String, String> {
     match arguments["action"].as_str().unwrap_or("questions").trim() {
         "questions" => homework_questions(&arguments).await,
         "requirements" => requirements::read(&arguments).await,
-        "submit" => submit_homework(&arguments).await,
+        "submit" => submission::submit_homework(&arguments).await,
         other => Err(format!("未知的 action「{other}」，只支持 questions / requirements / submit")),
     }
 }
