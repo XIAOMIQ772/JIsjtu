@@ -8,7 +8,7 @@ fn main() {
         .file(source)
         .flag("-fobjc-arc")
         .compile("pdf_vision");
-    for framework in ["Foundation", "CoreGraphics", "PDFKit", "Vision"] {
+    for framework in ["Foundation", "CoreGraphics", "ImageIO", "PDFKit", "Vision"] {
         println!("cargo:rustc-link-lib=framework={framework}");
     }
 }

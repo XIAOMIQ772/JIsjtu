@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use super::clip;
@@ -6,23 +7,27 @@ use super::clip;
 const PDF_SHORT_PAGES: usize = 12;
 const PDF_PAGE_HEAD_CHARS: usize = 60;
 
-fn pdf_cache() -> &'static Mutex<HashMap<String, Arc<Vec<String>>>> {
-    static CACHE: OnceLock<Mutex<HashMap<String, Arc<Vec<String>>>>> = OnceLock::new();
+struct CachedPdf {
+    digest: u64,
+    pages: Arc<Vec<String>>,
+}
+
+fn pdf_cache() -> &'static Mutex<HashMap<String, CachedPdf>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, CachedPdf>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 #[cfg(target_os = "macos")]
-fn extract_pages(path: String) -> Result<Vec<String>, String> {
-    use std::ffi::{CStr, CString, c_char};
+pub(super) fn extract_pages(bytes: &[u8]) -> Result<Vec<String>, String> {
+    use std::ffi::{CStr, c_char};
 
     unsafe extern "C" {
-        fn jisjtu_pdf_pages(path: *const c_char, error: *mut *mut c_char) -> *mut c_char;
+        fn jisjtu_pdf_pages(bytes: *const u8, length: usize, error: *mut *mut c_char) -> *mut c_char;
     }
-    let path = CString::new(path).map_err(|_| "文件路径包含空字符")?;
     let mut error = std::ptr::null_mut();
     // The bridge returns a malloc-owned UTF-8 JSON array or a malloc-owned error.
     unsafe {
-        let pages = jisjtu_pdf_pages(path.as_ptr(), &mut error);
+        let pages = jisjtu_pdf_pages(bytes.as_ptr(), bytes.len(), &mut error);
         if pages.is_null() {
             if error.is_null() {
                 return Err("系统未能读取 PDF".into());
@@ -38,27 +43,32 @@ fn extract_pages(path: String) -> Result<Vec<String>, String> {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn extract_pages(path: String) -> Result<Vec<String>, String> {
-    pdf_extract::extract_text_by_pages(path).map_err(|err| err.to_string())
+pub(super) fn extract_pages(bytes: &[u8]) -> Result<Vec<String>, String> {
+    pdf_extract::extract_text_from_mem_by_pages(bytes).map_err(|err| err.to_string())
 }
 
 pub(super) async fn load_pdf_pages(path: &str) -> Result<Arc<Vec<String>>, String> {
-    {
-        let cache = pdf_cache().lock().unwrap();
-        if let Some(pages) = cache.get(path) {
-            return Ok(pages.clone());
-        }
-    }
-
     let owned = path.to_string();
-    let pages = tokio::task::spawn_blocking(move || extract_pages(owned))
+    tokio::task::spawn_blocking(move || cached_pages(&owned))
         .await
         .map_err(|err| format!("解析任务失败: {err}"))?
-        .map_err(|err| format!("解析 PDF 失败: {err}"))?;
+}
+
+fn cached_pages(path: &str) -> Result<Arc<Vec<String>>, String> {
+    // 指纹与解析使用同一份快照，即使在读取期间替换同名文件也不会混用两个版本。
+    let bytes = std::fs::read(path).map_err(|err| format!("读取 PDF 失败: {err}"))?;
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    let digest = hasher.finish();
+    if let Some(hit) = pdf_cache().lock().unwrap().get(path).filter(|hit| hit.digest == digest) {
+        return Ok(hit.pages.clone());
+    }
+
+    let pages = extract_pages(&bytes).map_err(|err| format!("解析 PDF《{path}》失败：{err}"))?;
 
     if pages.iter().all(|page| page.trim().is_empty()) {
         #[cfg(target_os = "macos")]
-        return Err("PDF 中未识别出文字（已尝试离线 OCR）".into());
+        return Err(format!("PDF《{path}》没有识别到可读取的正文（共 {} 页）", pages.len()));
         #[cfg(not(target_os = "macos"))]
         return Err("没有可提取的文字，扫描版 PDF 的离线 OCR 目前仅支持 macOS".into());
     }
@@ -67,7 +77,7 @@ pub(super) async fn load_pdf_pages(path: &str) -> Result<Arc<Vec<String>>, Strin
     pdf_cache()
         .lock()
         .unwrap()
-        .insert(path.to_string(), pages.clone());
+        .insert(path.to_string(), CachedPdf { digest, pages: pages.clone() });
     Ok(pages)
 }
 
@@ -85,6 +95,9 @@ pub(super) async fn pdf_analysis(arguments: serde_json::Value) -> Result<String,
         .as_str()
         .ok_or_else(|| "pdf_analysis 缺少 path 参数".to_string())?
         .to_string();
+    if let Some(value) = arguments.get("image_page").filter(|value| !value.is_null()) {
+        return super::pdf_page_view::inspect(path, value).await;
+    }
 
     let pages = load_pdf_pages(&path).await?;
     let total = pages.len();
@@ -94,17 +107,20 @@ pub(super) async fn pdf_analysis(arguments: serde_json::Value) -> Result<String,
     if start.is_none() && end.is_none() && total > PDF_SHORT_PAGES {
         let mut text = format!("《{path}》共 {total} 页，内容较长。以下是各页开头，可当作目录：\n");
         for (index, page) in pages.iter().enumerate() {
-            let head: String = page
+            let (body, notice) = page.rsplit_once('\n')
+                .filter(|(_, last)| last.starts_with("[第 ") && last.contains("image_page="))
+                .unwrap_or((page, ""));
+            let head: String = body
                 .split_whitespace()
                 .collect::<Vec<_>>()
                 .join(" ")
                 .chars()
                 .take(PDF_PAGE_HEAD_CHARS)
                 .collect();
-            if head.is_empty() {
+            if head.is_empty() && notice.is_empty() {
                 continue;
             }
-            text.push_str(&format!("第 {} 页：{head}\n", index + 1));
+            text.push_str(&format!("第 {} 页：{head}{notice}\n", index + 1));
         }
         text.push_str("\n请确定需要的页码，再用 start_page / end_page 调用本工具读取原文。");
         return Ok(clip(&text));

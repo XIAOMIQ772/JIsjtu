@@ -31,6 +31,7 @@ mod office;
 pub(crate) mod outbound;
 mod open_usual_website;
 mod pdf_analysis;
+mod pdf_page_view;
 mod read;
 #[cfg(target_os = "macos")]
 pub(crate) mod reminders;
