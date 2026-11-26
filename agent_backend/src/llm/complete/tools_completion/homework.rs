@@ -7,344 +7,16 @@ use super::course_files::{CanvasFile, download_file};
 use super::office::document_pages;
 use super::pdf_analysis::load_pdf_pages;
 use super::text::html_to_text;
-use super::{MAX_OUTPUT_CHARS, clip};
+use super::MAX_OUTPUT_CHARS;
+
+mod questions;
+#[cfg(test)]
+use questions::QuestionStyle;
+use questions::{part_number, render_questions, split_question_sources, split_questions};
 
 const HOMEWORK_PREAMBLE_CHARS: usize = 800;
-const HOMEWORK_OUTLINE_CHARS: usize = 150;
-
-static HW_KEYWORD: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(?i)(?:problem|question|exercise|task|hw|q|习题|题目|练习)\s*[#.:：]?\s*(\d{1,3}(?:\.\d{1,3})?)(?:\D|$)").unwrap()
-});
-static HW_CHINESE_TI: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^第\s*[一二三四五六七八九十百零〇两\d]{1,4}\s*[题问]").unwrap());
-static HW_SECTION: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[一二三四五六七八九十]{1,3}\s*[、.．]").unwrap());
-static HW_DOTTED: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^((?:\d{1,2}\.){1,3})(\d{1,3})\.?(?:\s|$)").unwrap());
-static HW_ARABIC: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(\d{1,2})\s*[.．、)）]\s*(\S?)").unwrap());
-static HW_PAREN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[(（]\s*(\d{1,2})\s*[)）]").unwrap());
-static HW_SUBPART: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(?:[(（]\s*([a-hA-H]|i{1,3}|iv|vi{0,3})\s*[)）]|([a-h])[.)]\s)").unwrap()
-});
-static HW_POINTS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)[(（\[【]\s*(\d+(?:\.\d+)?)\s*(?:points?|pts?\.?|marks?|分)\s*[)）\]】]").unwrap()
-});
 static HW_FILE_LINK: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"/(?:courses/\d+/)?files/(\d+)").unwrap());
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum QuestionStyle {
-    Keyword,
-    ChineseTi,
-    Dotted,
-    Arabic,
-    Paren,
-    Section,
-    Whole,
-}
-
-impl QuestionStyle {
-    fn describe(self) -> &'static str {
-        match self {
-            QuestionStyle::Keyword => "Problem/Question/习题 N",
-            QuestionStyle::ChineseTi => "第N题",
-            QuestionStyle::Dotted => "2.1.1 / 3.4",
-            QuestionStyle::Arabic => "1. / 1) / 1、",
-            QuestionStyle::Paren => "(1)",
-            QuestionStyle::Section => "一、二、",
-            QuestionStyle::Whole => "未识别到编号，整体视为一题",
-        }
-    }
-}
-
-struct QuestionHeader {
-    line: usize,
-    style: QuestionStyle,
-    /// 多级编号的前缀，如 "2.1.1" 的 "2.1."；单级编号为空
-    prefix: String,
-    number: Option<u32>,
-    label: String,
-}
-
-#[derive(Debug)]
-struct Question {
-    label: String,
-    section: Option<String>,
-    first_page: usize,
-    last_page: usize,
-    points: Option<String>,
-    subparts: Vec<String>,
-    text: String,
-}
-
-struct ParsedHomework {
-    style: QuestionStyle,
-    preamble: String,
-    questions: Vec<Question>,
-}
-
-fn question_header(line: usize, text: &str) -> Option<QuestionHeader> {
-    let header = |style, prefix: &str, number, label: &str| {
-        Some(QuestionHeader {
-            line,
-            style,
-            prefix: prefix.to_string(),
-            number,
-            label: label.trim().to_string(),
-        })
-    };
-    if let Some(caps) = HW_KEYWORD.captures(text) {
-        return header(QuestionStyle::Keyword, "", None, &text[..caps.get(1).unwrap().end()]);
-    }
-    if let Some(found) = HW_CHINESE_TI.find(text) {
-        return header(QuestionStyle::ChineseTi, "", None, found.as_str());
-    }
-    if let Some(caps) = HW_PAREN.captures(text) {
-        let number = caps[1].parse().ok();
-        return header(QuestionStyle::Paren, "", number, caps.get(0).unwrap().as_str());
-    }
-    if let Some(caps) = HW_DOTTED.captures(text) {
-        let label = format!("{}{}", &caps[1], &caps[2]);
-        return header(QuestionStyle::Dotted, &caps[1], caps[2].parse().ok(), &label);
-    }
-    if let Some(caps) = HW_ARABIC.captures(text) {
-        // "3.5 m/s" 这类小数不是题号
-        if caps[2].chars().next().is_some_and(|c| c.is_ascii_digit()) {
-            return None;
-        }
-        return header(QuestionStyle::Arabic, "", caps[1].parse().ok(), &caps[1]);
-    }
-    None
-}
-
-/// 取编号逐一递增的最长链；中间出现「一、二、」这类大题标题，或多级编号换了章节
-/// （2.1.3 → 2.2.1）时允许从 1 重新编号。
-/// 这样能过滤掉题干内部的列举、年份、正文里碰巧出现在行首的数字。
-fn longest_chain<'a>(
-    candidates: &[&'a QuestionHeader],
-    section_lines: &[usize],
-) -> Vec<&'a QuestionHeader> {
-    let mut best: Vec<&QuestionHeader> = Vec::new();
-    for start in 0..candidates.len() {
-        let mut chain = vec![candidates[start]];
-        for candidate in &candidates[start + 1..] {
-            let last = chain.last().unwrap();
-            let same_prefix = candidate.prefix == last.prefix;
-            let restart = candidate.number == Some(1)
-                && (!same_prefix
-                    || section_lines.iter().any(|&line| line > last.line && line < candidate.line));
-            if (same_prefix && candidate.number == last.number.map(|n| n + 1)) || restart {
-                chain.push(candidate);
-            }
-        }
-        if chain.len() > best.len() {
-            best = chain;
-        }
-    }
-    best
-}
-
-fn split_questions(pages: &[String]) -> ParsedHomework {
-    let lines: Vec<(usize, &str)> = pages
-        .iter()
-        .enumerate()
-        .flat_map(|(page, text)| text.lines().map(move |line| (page + 1, line.trim())))
-        .filter(|(_, line)| !line.is_empty())
-        .collect();
-
-    let headers: Vec<QuestionHeader> = lines
-        .iter()
-        .enumerate()
-        .filter_map(|(index, (_, text))| question_header(index, text))
-        .collect();
-    let sections: Vec<usize> = lines
-        .iter()
-        .enumerate()
-        .filter(|(_, (_, text))| HW_SECTION.is_match(text))
-        .map(|(index, _)| index)
-        .collect();
-
-    let of_style = |style| headers.iter().filter(|h| h.style == style).collect::<Vec<_>>();
-    let keyword = of_style(QuestionStyle::Keyword);
-    let chinese = of_style(QuestionStyle::ChineseTi);
-    // 多级编号只看最深的一层，"2.1" 这类上层编号是小节标题
-    let dotted_all = of_style(QuestionStyle::Dotted);
-    let depth = |h: &QuestionHeader| h.prefix.matches('.').count();
-    let deepest = dotted_all.iter().map(|h| depth(h)).max().unwrap_or(0);
-    let dotted = longest_chain(
-        &dotted_all.iter().copied().filter(|h| depth(h) == deepest).collect::<Vec<_>>(),
-        &sections,
-    );
-    let arabic = longest_chain(&of_style(QuestionStyle::Arabic), &sections);
-    let paren = longest_chain(&of_style(QuestionStyle::Paren), &sections);
-
-    // (行号, 题号标签)
-    let (style, mut starts): (QuestionStyle, Vec<(usize, String)>) = if !keyword.is_empty() {
-        (QuestionStyle::Keyword, keyword.iter().map(|h| (h.line, h.label.clone())).collect())
-    } else if !chinese.is_empty() {
-        (QuestionStyle::ChineseTi, chinese.iter().map(|h| (h.line, h.label.clone())).collect())
-    } else if dotted.len() >= 2 && dotted.len() >= arabic.len() {
-        (QuestionStyle::Dotted, dotted.iter().map(|h| (h.line, h.label.clone())).collect())
-    } else if arabic.len() >= 2 && arabic.len() >= paren.len() {
-        (QuestionStyle::Arabic, arabic.iter().map(|h| (h.line, h.label.clone())).collect())
-    } else if paren.len() >= 2 {
-        (QuestionStyle::Paren, paren.iter().map(|h| (h.line, h.label.clone())).collect())
-    } else if sections.len() >= 2 {
-        let starts = sections
-            .iter()
-            .map(|&line| (line, HW_SECTION.find(lines[line].1).unwrap().as_str().to_string()))
-            .collect();
-        (QuestionStyle::Section, starts)
-    } else {
-        (QuestionStyle::Whole, vec![(0, "全文".to_string())])
-    };
-
-    // 同一题跨页时常重复题头（如 "Problem 2 (continued)"），合并到同一题
-    starts.dedup_by(|next, previous| style == QuestionStyle::Keyword && next.1 == previous.1);
-
-    let section_label = |line: usize| -> Option<String> {
-        if style == QuestionStyle::Section {
-            return None;
-        }
-        sections
-            .iter()
-            .rev()
-            .find(|&&section| section < line)
-            .map(|&section| lines[section].1.chars().take(40).collect())
-    };
-
-    let preamble_end = starts.first().map(|(line, _)| *line).unwrap_or(0);
-    let preamble: String = lines[..preamble_end]
-        .iter()
-        .filter(|(_, text)| !HW_SECTION.is_match(text))
-        .map(|(_, text)| *text)
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let mut questions = Vec::new();
-    for (position, (start, label)) in starts.iter().enumerate() {
-        let next_start = starts.get(position + 1).map(|(line, _)| *line).unwrap_or(lines.len());
-        // 下一道大题标题之前就结束，避免把「二、填空题」算进上一题
-        let end = sections
-            .iter()
-            .copied()
-            .find(|&line| line > *start && line < next_start && style != QuestionStyle::Section)
-            .unwrap_or(next_start);
-        let body = &lines[*start..end];
-        if body.is_empty() {
-            continue;
-        }
-
-        let text = body.iter().map(|(_, text)| *text).collect::<Vec<_>>().join("\n");
-        let head: String = text.chars().take(300).collect();
-        let points = HW_POINTS.captures(&head).map(|caps| caps[1].to_string());
-
-        let mut subparts: Vec<String> = Vec::new();
-        for (_, line) in &body[1..] {
-            let found = HW_SUBPART
-                .captures(line)
-                .map(|caps| format!("({})", caps.get(1).or(caps.get(2)).unwrap().as_str()))
-                .or_else(|| {
-                    (style != QuestionStyle::Paren)
-                        .then(|| HW_PAREN.captures(line).map(|caps| format!("({})", &caps[1])))
-                        .flatten()
-                });
-            if let Some(found) = found {
-                if !subparts.contains(&found) {
-                    subparts.push(found);
-                }
-            }
-        }
-
-        questions.push(Question {
-            label: label.clone(),
-            section: section_label(*start),
-            first_page: body.first().unwrap().0,
-            last_page: body.last().unwrap().0,
-            points,
-            subparts,
-            text,
-        });
-    }
-
-    ParsedHomework { style, preamble, questions }
-}
-
-fn question_title(index: usize, question: &Question) -> String {
-    let mut title = format!("第 {} 题 · {}", index + 1, question.label);
-    if let Some(section) = &question.section {
-        title.push_str(&format!(" · 所属：{section}"));
-    }
-    if question.first_page == question.last_page {
-        title.push_str(&format!(" · 第 {} 页", question.first_page));
-    } else {
-        title.push_str(&format!(" · 第 {}–{} 页", question.first_page, question.last_page));
-    }
-    if let Some(points) = &question.points {
-        title.push_str(&format!(" · {points} 分"));
-    }
-    if !question.subparts.is_empty() {
-        title.push_str(&format!(" · 小问 {}", question.subparts.join("")));
-    }
-    title
-}
-
-fn render_questions(header: &str, parsed: &ParsedHomework, only: Option<&str>) -> Result<String, String> {
-    if let Some(wanted) = only {
-        let wanted = wanted.trim().to_lowercase();
-        let found = parsed.questions.iter().enumerate().find(|(index, question)| {
-            (index + 1).to_string() == wanted || question.label.to_lowercase() == wanted
-        });
-        return match found {
-            Some((index, question)) => Ok(clip(&format!(
-                "{header}\n=== {} ===\n{}\n",
-                question_title(index, question),
-                question.text
-            ))),
-            None => Err(format!(
-                "没有编号为「{wanted}」的题目，共识别到 {} 题，可传 1–{} 的序号",
-                parsed.questions.len(),
-                parsed.questions.len()
-            )),
-        };
-    }
-
-    let mut text = format!(
-        "{header}识别到 {} 道题（编号样式：{}）\n",
-        parsed.questions.len(),
-        parsed.style.describe()
-    );
-    let preamble = parsed.preamble.trim();
-    if !preamble.is_empty() {
-        let preamble: String = preamble.chars().take(HOMEWORK_PREAMBLE_CHARS).collect();
-        text.push_str(&format!("\n[题前说明]\n{preamble}\n"));
-    }
-
-    let mut full = text.clone();
-    for (index, question) in parsed.questions.iter().enumerate() {
-        full.push_str(&format!("\n=== {} ===\n{}\n", question_title(index, question), question.text));
-    }
-    if full.len() < MAX_OUTPUT_CHARS {
-        return Ok(full);
-    }
-
-    text.push_str("\n内容较长，以下为题目目录：\n");
-    for (index, question) in parsed.questions.iter().enumerate() {
-        let head: String = question
-            .text
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .chars()
-            .take(HOMEWORK_OUTLINE_CHARS)
-            .collect();
-        text.push_str(&format!("\n{}\n  {head}\n", question_title(index, question)));
-    }
-    text.push_str("\n请用 question=序号 逐题读取完整题干。");
-    Ok(clip(&text))
-}
 
 fn text_to_html(text: &str) -> String {
     if text.trim_start().starts_with('<') {
@@ -509,10 +181,11 @@ async fn download_homework_attachments(
 
 async fn homework_questions(arguments: &serde_json::Value) -> Result<String, String> {
     let only = homework_arg(arguments, "question");
+    let part = part_number(arguments)?;
 
     if let Some(text) = homework_arg(arguments, "text") {
         let parsed = split_questions(&[text.to_string()]);
-        return render_questions("来源：用户提供的作业文字\n", &parsed, only);
+        return render_questions("来源：用户提供的作业文字\n", &parsed, only, part);
     }
 
     if let Some(path) = homework_arg(arguments, "path") {
@@ -528,7 +201,7 @@ async fn homework_questions(arguments: &serde_json::Value) -> Result<String, Str
                 .map_err(|err| format!("读取 {path} 失败: {err}"))?]
         };
         let header = format!("来源：{path}（共 {} 页）\n", pages.len());
-        return render_questions(&header, &split_questions(&pages), only);
+        return render_questions(&header, &split_questions(&pages), only, part);
     }
 
     let (Some(course_id), Some(assignment_id)) = (
@@ -554,7 +227,8 @@ async fn homework_questions(arguments: &serde_json::Value) -> Result<String, Str
         header.push_str(&format!("{failure}\n"));
     }
 
-    let mut pages: Vec<String> = Vec::new();
+    let mut sources = Vec::new();
+    let mut page_count = 0;
     for (path, is_pdf) in &attachments {
         // PDF 按页读取；Word 整篇、PowerPoint 每页一段；其他附件留给对应工具
         let loaded: Result<Vec<String>, String> = if *is_pdf {
@@ -570,23 +244,26 @@ async fn homework_questions(arguments: &serde_json::Value) -> Result<String, Str
                 header.push_str(&format!(
                     "{} 对应第 {}–{} 页\n",
                     path.display(),
-                    pages.len() + 1,
-                    pages.len() + loaded.len()
+                    page_count + 1,
+                    page_count + loaded.len()
                 ));
-                pages.extend(loaded);
+                page_count += loaded.len();
+                if !loaded.is_empty() {
+                    sources.push(loaded);
+                }
             }
             Err(err) => header.push_str(&format!("{} 无法提取文字：{err}\n", path.display())),
         }
     }
 
-    if pages.is_empty() {
+    if sources.is_empty() {
         if description.is_empty() {
             return Ok(format!(
                 "{header}\n作业说明为空，也没有可读取的附件（PDF、Word、PowerPoint）。其他附件请用对应工具读取。"
             ));
         }
         header.push_str("题目来源：作业说明文字\n");
-        return render_questions(&header, &split_questions(&[description]), only);
+        return render_questions(&header, &split_questions(&[description]), only, part);
     }
 
     if !description.is_empty() {
@@ -594,7 +271,7 @@ async fn homework_questions(arguments: &serde_json::Value) -> Result<String, Str
         header.push_str(&format!("\n[作业说明]\n{description}\n"));
     }
     header.push_str("题目来源：附件\n");
-    render_questions(&header, &split_questions(&pages), only)
+    render_questions(&header, &split_question_sources(&sources), only, part)
 }
 
 async fn upload_submission_file(

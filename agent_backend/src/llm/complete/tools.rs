@@ -460,7 +460,7 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
             description: Some(
                 "帮用户写作业并提交到 Canvas。action=questions：从作业来源中准确切分题目，返回每道题的编号、页码、分值、小问和完整题干；\
                  来源三选一：path=本地 PDF、Word（docx）、PowerPoint（pptx）或文本文件，text=作业只是一段文字时直接传入，course_id+assignment_id=Canvas 作业（自动读取说明并下载其中的 PDF/Word/PowerPoint 附件）。\
-                 题目较多时先返回目录，再用 question 传序号读取单题。写作业时先用它拿到题目再逐题作答。\
+                 题目较多时先返回目录，再用 question 传序号读取单题；长题或目录用 part 续读。写作业时先用它拿到题目再逐题作答。\
                  action=submit：text 为在线文本提交，files 为上传本地文件提交，二者只能选一。\
                  用户已经明确说可以提交（如“写完直接交”“提交吧”）时，传 confirm=true 直接提交；\
                  用户没有明确说要提交时，传 confirm=false 生成预览，系统会把预览直接展示给用户，\
@@ -492,7 +492,11 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
                     },
                     "question":{
                         "type":"string",
-                        "description":"questions：只读取某一题，传序号（从 1 开始）或题号如 Problem 3"
+                        "description":"questions：只读取某一题，数字优先匹配目录序号（从 1 开始），也支持原题标签如 Problem 3"
+                    },
+                    "part":{
+                        "type":"integer","minimum":1,
+                        "description":"questions 返回多段时，保持其他参数相同，传目标段号（默认 1）"
                     },
                     "files":{
                         "type":"array",
