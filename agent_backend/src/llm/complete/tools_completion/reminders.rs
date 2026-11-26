@@ -128,8 +128,30 @@ fn show_toast(title: &str, body: &str) -> windows::core::Result<()> {
     use windows::UI::Notifications::{
         ToastNotification, ToastNotificationManager, ToastTemplateType,
     };
+    use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+    use windows::Win32::System::WinRT::{
+        RO_INIT_MULTITHREADED, RO_INIT_SINGLETHREADED, RoInitialize, RoUninitialize,
+    };
     use windows::core::HSTRING;
 
+    struct Apartment;
+    impl Drop for Apartment {
+        fn drop(&mut self) {
+            unsafe { RoUninitialize() }
+        }
+    }
+    // A reused blocking worker may already belong to a single-threaded apartment.
+    // Balance initialization on this thread after all its WinRT objects are released.
+    unsafe {
+        RoInitialize(RO_INIT_MULTITHREADED).or_else(|error| {
+            if error.code() == RPC_E_CHANGED_MODE {
+                RoInitialize(RO_INIT_SINGLETHREADED)
+            } else {
+                Err(error)
+            }
+        })?;
+    }
+    let _apartment = Apartment;
     let xml = ToastNotificationManager::GetTemplateContent(ToastTemplateType::ToastText02)?;
     let lines = xml.GetElementsByTagName(&HSTRING::from("text"))?;
     for (index, content) in [(0, title), (1, body)] {
