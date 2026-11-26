@@ -110,10 +110,9 @@ impl StudentSession {
             )
             .await
             .map_err(|_| LOGIN_ERROR)?;
-        let python = std::env::var_os("AGENT_SSO_PYTHON").unwrap_or_else(|| "python3".into());
-        let mut command = Command::new(python);
+        let mut command = Command::new(crate::sso::python());
         command
-            .args(["-I", "-c", include_str!("attendance_source.py")])
+            .args(["-I", "-X", "utf8", "-c", include_str!("attendance_source.py")])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

@@ -152,7 +152,7 @@ async fn main() {
     });
     let tcp_task = tokio::spawn(serve_tcp(tcp_listener));
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     {
         llm::complete::tools_completion::attendance_watch::start();
         llm::complete::tools_completion::reminders::start();

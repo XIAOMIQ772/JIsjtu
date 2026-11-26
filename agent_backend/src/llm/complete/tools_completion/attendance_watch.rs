@@ -112,7 +112,7 @@ pub(super) fn schedule(
             .to_string()
     };
     Ok(format!(
-        "{state}《{course_name}》的签到监看。北京时间 {} 至 {}，每 30 秒检查一次。发现本节课的新签到活动时发送 macOS 通知。请在监看时段保持 JIsjtu 运行。",
+        "{state}《{course_name}》的签到监看。北京时间 {} 至 {}，每 30 秒检查一次。发现本节课的新签到活动时发送系统通知。请在监看时段保持 JIsjtu 运行。",
         local(open),
         local(end)
     ))
@@ -137,11 +137,15 @@ impl Scheduler {
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
             Err(e) => return Err(e.to_string()),
         };
-        let watch: Watch = serde_json::from_reader(&file).map_err(|e| e.to_string())?;
-        if path.file_name().and_then(|name| name.to_str()) != Some(watch.filename().as_str()) {
-            return Err("签到监看文件与课程不匹配".into());
-        }
-        let start = DateTime::from_timestamp(watch.start, 0).ok_or("无效的上课时间")?;
+        // On Windows an exclusive file lock also blocks reads by other processes.
+        // The filename gives waiting instances the polling window without reading the file.
+        let start = path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.split_once('-'))
+            .and_then(|(timestamp, _)| timestamp.parse().ok())
+            .and_then(|seconds| DateTime::from_timestamp(seconds, 0))
+            .ok_or("无效的上课时间")?;
         let open = start - BEFORE;
         let end = start + AFTER;
         wait_until(open).await;
@@ -157,6 +161,10 @@ impl Scheduler {
             }
         }
         if path.exists() && Utc::now() <= end {
+            let watch: Watch = serde_json::from_reader(&file).map_err(|e| e.to_string())?;
+            if path.file_name().and_then(|name| name.to_str()) != Some(watch.filename().as_str()) {
+                return Err("签到监看文件与课程不匹配".into());
+            }
             self.poll(&watch, open, end).await;
         }
         match fs::remove_file(path) {

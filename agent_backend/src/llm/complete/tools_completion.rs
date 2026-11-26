@@ -1,10 +1,10 @@
 //! 工具实现：每个工具一个子模块，这里只负责按名字分发和少量共用的辅助函数。
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 mod attendance_class;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 mod attendance_source;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 pub(crate) mod attendance_watch;
 mod bash;
 mod campus_time;
@@ -35,7 +35,7 @@ mod open_usual_website;
 mod pdf_analysis;
 mod pdf_page_view;
 mod read;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 pub(crate) mod reminders;
 mod search_files;
 mod shuiyuan;
@@ -91,7 +91,7 @@ pub async fn call(name: &str, arguments: serde_json::Value) -> Result<String, St
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 async fn watch_attendance(arguments: serde_json::Value) -> Result<String, String> {
     if !attendance_watch::is_running() {
         return Err("请启动 JIsjtu，在终端聊天或网页对话里安排签到提醒。".into());
@@ -100,9 +100,9 @@ async fn watch_attendance(arguments: serde_json::Value) -> Result<String, String
     attendance_watch::schedule(class.course_id, &class.course_name, class.start)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 async fn watch_attendance(_: serde_json::Value) -> Result<String, String> {
-    Err("课堂签到监看需要在 macOS 版 JIsjtu 中运行。".into())
+    Err("课堂签到监看需要在 Windows 或 macOS 版 JIsjtu 中运行。".into())
 }
 
 fn clip(text: &str) -> String {

@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use tokio::process::Command;
 use tokio::time::{self, MissedTickBehavior};
 
 use super::campus_time;
@@ -109,6 +108,55 @@ impl Source {
     }
 }
 
+#[cfg(target_os = "macos")]
+async fn deliver_notification(title: &str, body: &str) -> bool {
+    const SCRIPT: &str =
+        "on run argv\n display notification (item 2 of argv) with title (item 1 of argv)\nend run";
+    let result = time::timeout(
+        Duration::from_secs(8),
+        tokio::process::Command::new("/usr/bin/osascript")
+            .args(["-e", SCRIPT, "--", title, body])
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await;
+    matches!(result, Ok(Ok(output)) if output.status.success())
+}
+
+#[cfg(windows)]
+fn show_toast(title: &str, body: &str) -> windows::core::Result<()> {
+    use windows::UI::Notifications::{
+        ToastNotification, ToastNotificationManager, ToastTemplateType,
+    };
+    use windows::core::HSTRING;
+
+    let xml = ToastNotificationManager::GetTemplateContent(ToastTemplateType::ToastText02)?;
+    let lines = xml.GetElementsByTagName(&HSTRING::from("text"))?;
+    for (index, content) in [(0, title), (1, body)] {
+        lines
+            .Item(index)?
+            .AppendChild(&xml.CreateTextNode(&HSTRING::from(content))?)?;
+    }
+    let toast = ToastNotification::CreateToastNotification(&xml)?;
+    // The installer sets this AppUserModelID on the Start menu shortcut.
+    let notifier =
+        ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from("JIsjtu.Desktop"))?;
+    notifier.Show(&toast)
+}
+
+#[cfg(windows)]
+async fn deliver_notification(title: &str, body: &str) -> bool {
+    let (title, body) = (title.to_owned(), body.to_owned());
+    match tokio::task::spawn_blocking(move || show_toast(&title, &body)).await {
+        Ok(Ok(())) => true,
+        Ok(Err(error)) => {
+            eprintln!("Windows 系统通知发送失败：{error}");
+            false
+        }
+        Err(_) => false,
+    }
+}
+
 pub(super) async fn notify_once(receipt: &Path, title: &str, body: &str) -> bool {
     // Reserve before delivery so two instances using the same profile cannot both notify.
     let reserved = match fs::OpenOptions::new()
@@ -120,17 +168,7 @@ pub(super) async fn notify_once(receipt: &Path, title: &str, body: &str) -> bool
         Err(err) if err.kind() == ErrorKind::AlreadyExists => return true,
         Err(_) => false, // A read-only profile still gets in-memory deduplication.
     };
-    const SCRIPT: &str =
-        "on run argv\n display notification (item 2 of argv) with title (item 1 of argv)\nend run";
-    let result = time::timeout(
-        Duration::from_secs(8),
-        Command::new("/usr/bin/osascript")
-            .args(["-e", SCRIPT, "--", title, body])
-            .kill_on_drop(true)
-            .output(),
-    )
-    .await;
-    let delivered = matches!(result, Ok(Ok(output)) if output.status.success());
+    let delivered = deliver_notification(title, body).await;
     if reserved && !delivered {
         let _ = fs::remove_file(receipt);
     }

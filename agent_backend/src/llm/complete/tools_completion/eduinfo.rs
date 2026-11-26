@@ -119,7 +119,7 @@ pub(super) fn schedule_request(term: TermCode) -> FetchRequest {
     FetchRequest::post(SCHEDULE_PATH, &form)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 pub(super) async fn cached_classes(term: TermCode) -> Result<Vec<Class>, String> {
     let responses = crate::sso::cached_campus_fetch(ENTRY, &[schedule_request(term)], RESPONSE_LIMIT).await?;
     let response = responses.first().ok_or("教务系统未返回课表")?;
