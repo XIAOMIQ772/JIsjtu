@@ -39,7 +39,7 @@ description: 交大校园常识速查：常用系统入口与用途、校历与�
 - 课程公告：get_announcements
 - 课件资料：course_files（list 后 download，PDF 用 pdf_analysis 读，pptx/docx/xlsx 用 read_office 读）
 - 把课表、考试、作业截止导入手机日历：export_calendar
-- 写作业、交作业：用 homework questions 按老师指定范围取题，requirements 可读完整网页说明与评分细则，长题按 part 续读。检查最终文件时，按题号作答的用 required_questions，明确要求单独上传的文件用 required_files。当前会话审阅后用原 preview_id 提交，事先明确授权直接交的可直接带成品提交。
+- 读题、写作业和交作业用 homework。查题或讲题时用 questions 按需取题，requirements 可查老师的完整要求。按指定题目和格式交付。准备提交时，用 required_questions 核对要求标出的题号，用 required_files 核对必须单独上传的文件。
 - 找自习教室：find_classroom；图书馆人多不多：library_status
 - 选课评价、老师口碑、校园经验：shuiyuan_search，再用 shuiyuan_topic 读帖子
 - 学校邮件：mail_fetch（search 找邮件，attachment 下载附件）

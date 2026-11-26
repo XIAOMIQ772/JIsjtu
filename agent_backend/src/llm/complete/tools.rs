@@ -463,10 +463,10 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
             name: "homework".to_string(),
             description: Some(
                 "从 Canvas（course_id + assignment_id）、本地 PDF/Word/PowerPoint/文本（path）或文字（text）读取作业。\
-                 questions 返回候选题号、页码、小问、共同说明和附件位置。按老师指定范围作答，长目录、长题或说明用 part 续读，单题用 question 指定。\
-                 requirements 读取 Canvas 完整网页说明、评分细则和提交方式。按说明核对每个必做题、评分点和最终文件。\
-                 submit 提交在线答案 text 或上传文件 files，可传 required_files 核对老师明确要求单独上传的文件。用户明确要求写完直接交时，带内容和 confirm=true；\
-                 需要用户审阅时 confirm=false 生成预览，待同意后传相同的课程、作业、preview_id 和 confirm=true。".to_string(),
+                 questions 取题面和共同说明，单题用 question，长内容按 part 续读。按本次指定的题号或小问作答，附件中的其他题可供参考。\
+                 requirements 读取完整网页说明、评分细则和提交方式，用来确定必做内容和必交文件。\
+                 仅在准备 Canvas 预览或提交时用 submit。在线答案用 text，文件上传用 files。按题号交的用 required_questions 核对，要求单独上传的文件用 required_files 核对。用户明确要求直接交时带内容和 confirm=true。\
+                 准备给用户审阅时用 confirm=false，同意后带原课程、作业、preview_id 和 confirm=true 提交。".to_string(),
             ),
             parameters: Some(json!({
                 "type":"object",
@@ -503,11 +503,11 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
                     "files":{
                         "type":"array",
                         "items":{"type":"string"},
-                        "description":"submit：要上传的本地文件绝对路径"
+                        "description":"submit：本次实际要交的成品文件绝对路径，每项按选定的格式提供"
                     },
                     "required_files":{
                         "type":"array","items":{"type":"string"},
-                        "description":"submit：老师明确要求单独上传的每个文件名或扩展名，如 report.pdf、.py。压缩包内部文件另行核对。"
+                        "description":"submit：只填老师明确要求单独上传的文件名或扩展名。允许任选的格式和压缩包内成员省略。"
                     },
                     "required_questions":{
                         "type":"array","items":{"type":"string"},
@@ -519,7 +519,7 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
                     },
                     "comment":{
                         "type":"string",
-                        "description":"submit：附带给老师的留言，可选"
+                        "description":"submit：仅在用户或作业明确要求给老师留言时填写"
                     },
                     "confirm":{
                         "type":"boolean",
