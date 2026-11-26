@@ -58,6 +58,13 @@ foreach ($name in 'agent.exe', '.env.example', 'requirements-sso.txt', 'Setup-Ca
     $files[$name] = Join-Path $PSScriptRoot $name
 }
 $files['bin/JIsjtu.cmd'] = Join-Path $PSScriptRoot 'JIsjtu.cmd'
+if (-not [IO.File]::Exists((Join-Path $PSScriptRoot 'pdf-tools/pdfium.dll'))) {
+    throw '安装包缺少 PDF 渲染库，请先完整解压 ZIP。'
+}
+foreach ($file in Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'pdf-tools') -File -Recurse) {
+    $relative = $file.FullName.Substring($PSScriptRoot.Length + 1)
+    $files[$relative] = $file.FullName
+}
 foreach ($dll in Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.dll' -File) {
     $files[$dll.Name] = $dll.FullName
 }

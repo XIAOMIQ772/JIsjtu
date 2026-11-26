@@ -33,7 +33,7 @@
 
 上课、作业截止提醒和签到监看使用 Windows 通知。在系统「设置 → 系统 → 通知」中允许 JIsjtu 发送通知，保持电脑唤醒、交我集运行。签到监看还需要有效的 Canvas 令牌及已开放「点名签到」的课程。
 
-终端命令工具在 Windows 上执行 PowerShell 命令。处理扫描版 PDF 或图片时，文字识别使用 Windows OCR。要识别中文，请在 Windows 语言设置中添加简体中文并安装对应的 OCR 功能。
+终端命令工具在 Windows 上执行 PowerShell 命令。安装包自带 PDFium、Tesseract 和简体中文、英文识别数据，可在本机离线渲染 PDF 原页、识别扫描件与图片。相关许可证随程序保存在 `pdf-tools` 中。
 
 ## 升级与安装位置
 
