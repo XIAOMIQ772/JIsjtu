@@ -10,6 +10,7 @@ use super::pdf_analysis::load_pdf_pages;
 use super::text::html_to_text;
 use super::MAX_OUTPUT_CHARS;
 
+mod artifact;
 mod questions;
 mod requirements;
 use questions::QuestionStyle;
@@ -477,6 +478,9 @@ fn submission_from_arguments(
             return Err(format!("文件 {} 不存在", file.display()));
         }
     }
+    artifact::check_required_files(arguments, &files)?;
+    let checked = files.iter().map(|path| artifact::inspect(path)).collect::<Result<Vec<_>, _>>()?;
+    artifact::check_required_questions(arguments, text, checked.iter())?;
     Ok(Some(PendingSubmission {
         course_id: course_id.to_string(),
         assignment_id: assignment_id.to_string(),

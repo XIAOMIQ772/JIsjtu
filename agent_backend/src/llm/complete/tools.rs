@@ -507,6 +507,14 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
                         "items":{"type":"string"},
                         "description":"submit：要上传的本地文件绝对路径"
                     },
+                    "required_files":{
+                        "type":"array","items":{"type":"string"},
+                        "description":"submit：老师明确要求单独上传的每个文件名或扩展名，如 report.pdf、.py。压缩包内部文件另行核对。"
+                    },
+                    "required_questions":{
+                        "type":"array","items":{"type":"string"},
+                        "description":"submit：成品要求按题号作答时，传应当在答案中读到的原题号（如 2、5），工具会核对实际在线正文或 PDF、Word、文本里的标题。无编号的报告、代码等省略。"
+                    },
                     "comment":{
                         "type":"string",
                         "description":"submit：附带给老师的留言，可选"
