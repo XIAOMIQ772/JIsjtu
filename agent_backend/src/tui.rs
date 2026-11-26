@@ -1939,6 +1939,7 @@ fn tool_label(name: &str) -> Option<&'static str> {
         "pdf_analysis" => "阅读 PDF",
         "read_office" => "阅读 Office 文档",
         "course_files" => "查找课程资料",
+        "course_reviews" => "查询课程评价",
         "search_files" => "搜索课程文件",
         "homework" => "处理作业",
         "watch_eduinfo" => "访问教学信息网",
