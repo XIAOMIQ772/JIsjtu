@@ -14,6 +14,7 @@ const { setTimeout: delay } = require('node:timers/promises');
 
 const repo = path.resolve(__dirname, '../..');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jisjtu-session-e2e-'));
+const contextBudget = 32768;
 const calls = [];
 const held = [];
 let processHandle, browser;
@@ -45,6 +46,15 @@ const model = http.createServer(async (req, res) => {
   if (user === '工具测试' && body.messages.at(-1).role === 'user') {
     chunk({ tool_calls: [{ index: 0, id: 'call-1', type: 'function', function: { name: 'get_time_stamp', arguments: '{' } }] });
     chunk({ tool_calls: [{ index: 0, function: { arguments: '}' } }] });
+    finish('tool_calls');
+    return;
+  }
+  const readFixture = /^读取测试资料 ([1-4])$/.exec(user);
+  if (readFixture && body.messages.at(-1).role === 'user') {
+    const line = Number(readFixture[1]);
+    chunk({ tool_calls: [{ index: 0, id: `read-fixture-${line}`, type: 'function', function: {
+      name: 'read', arguments: JSON.stringify({ path: path.join(root, 'context-fixture.txt'), offset: line, limit: 1 }),
+    } }] });
     finish('tool_calls');
     return;
   }
@@ -88,7 +98,7 @@ async function until(check, message) {
   const base = `http://127.0.0.1:${port}`;
   const env = { ...process.env, OPENAI_API_KEY: 'fake-test-key', OPENAI_BASE_URL: `http://127.0.0.1:${model.address().port}/v1`,
     MODEL: 'fake', AGENT_HTTP_PORT: String(port), AGENT_TCP_PORT: String(tcp), AGENT_NO_BROWSER: '1', AGENT_SSO_AUTO_LOGIN: '0',
-    AGENT_BIND_ADDR: '127.0.0.1', AGENT_REMINDERS: '0',
+    AGENT_BIND_ADDR: '127.0.0.1', AGENT_REMINDERS: '0', AGENT_CONTEXT_BYTES: String(contextBudget),
     AGENT_FRONTEND_DIR: path.join(repo, 'agent_frontend'), AGENT_SKILLS_DIR: path.join(root, 'skills'),
     AGENT_SESSIONS_DIR: path.join(root, 'sessions'), HTTP_PROXY: '', HTTPS_PROXY: '', ALL_PROXY: '',
     http_proxy: '', https_proxy: '', all_proxy: '', NO_PROXY: '*', no_proxy: '*' };
@@ -348,5 +358,40 @@ async function testDreaming(page, base, restart) {
   await restart();
   assert.equal(await probeFresh(), baseline, 'Cleared preferences must stay cleared across restarts');
 
-
+  const longChat = await newChat();
+  const firstCall = calls.length;
+  const lines = [1, 2, 3, 4].map(n => '课'.repeat(2400) + `fixture-middle-${n}` + '表'.repeat(2400));
+  fs.writeFileSync(path.join(root, 'context-fixture.txt'), lines.join('\n'));
+  for (let n = 1; n <= lines.length; n++) await ask(`读取测试资料 ${n}`, 2);
+  await restart();
+  assert.equal(await active.getAttribute('data-session-id'), longChat);
+  const resumed = await ask('汇总刚才的资料');
+  assert(resumed.includes('汇总刚才的资料') && resumed.includes('回答：读取测试资料 4'));
+  assert(!resumed.includes('fixture-middle-1'), 'An old tool payload must be compacted on the wire');
+  const history = JSON.parse(fs.readFileSync(path.join(root, 'sessions', `${longChat}.json`)));
+  for (const [index, line] of lines.entries()) {
+    const result = history.messages.find(m => m.role === 'tool' && m.tool_call_id === `read-fixture-${index + 1}`);
+    assert(result?.content.includes(line), 'Persist the original tool result even when requests are compacted');
+  }
+  const beforeOversized = calls.length;
+  await send('输入'.repeat(6000)); // 36,000 UTF-8 bytes before the message envelope.
+  await page.locator('.notice.error').filter({ hasText: /上下文预算/ }).waitFor();
+  assert.equal(calls.length, beforeOversized, 'Unsendable input must fail locally');
+  await ask('恢复后继续提问');
+  await page.getByText('回答：恢复后继续提问', { exact: true }).waitFor();
+  assert.equal(await active.getAttribute('data-session-id'), longChat);
+  for (const { messages } of calls.slice(firstCall)) {
+    assert(Buffer.byteLength(JSON.stringify(messages)) <= contextBudget, 'Projected messages exceed the UTF-8 byte budget');
+    const pending = new Set();
+    for (const message of messages) {
+      if (message.role === 'tool') {
+        assert(pending.delete(message.tool_call_id), 'Orphan tool result on the wire');
+      } else {
+        assert.equal(pending.size, 0, 'Missing tool response on the wire');
+        for (const call of message.tool_calls || []) pending.add(call.id);
+      }
+    }
+    assert.equal(pending.size, 0, 'Incomplete final tool group on the wire');
+  }
+  console.log('PASS: compacted model requests stay in budget, preserve paired tools and resume with full on-disk history.');
 }

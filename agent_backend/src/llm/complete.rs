@@ -12,6 +12,7 @@ use serde_json::Value;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::llm::complete::tools::get_tools;
+mod context;
 mod streaming;
 pub mod tools;
 pub mod tools_completion;
@@ -117,12 +118,13 @@ async fn chat_with_tools(
     } else {
         format!("\n【答复偏好】仅在本次任务适用且用户未另行指定时参考。\n{}", preferences.join("\n"))
     };
+    let budget = context::budget();
     // 每一轮就是一次“思考 → 行动 → 观察”，步数受 MAX_REACT_STEPS 限制。
     for _ in 0..MAX_REACT_STEPS {
         let request = CreateChatCompletionRequestArgs::default()
             .model(model)
             .tools(tools.clone())
-            .messages(request_messages(messages, &preference_note))
+            .messages(request_messages(messages, budget, &preference_note)?)
             .build()?;
         let mut message = StreamedMessage::default();
         if let Err(error) = stream_message(request, client, tx, &mut message).await {
@@ -205,16 +207,21 @@ async fn chat_with_tools(
 
 fn request_messages(
     history: &[ChatCompletionRequestMessage],
+    budget: usize,
     preference_note: &str,
-) -> Vec<ChatCompletionRequestMessage> {
-    let mut messages = history.to_vec();
-    if !preference_note.is_empty()
-        && let Some(ChatCompletionRequestMessage::System(system)) = messages.first_mut()
-        && let ChatCompletionRequestSystemMessageContent::Text(text) = &mut system.content
-    {
-        text.push_str(preference_note);
+) -> anyhow::Result<Vec<ChatCompletionRequestMessage>> {
+    if !preference_note.is_empty() {
+        // The note extends an existing JSON string; its surrounding quotes cost nothing.
+        let note_bytes = serde_json::to_string(preference_note)?.len() - 2;
+        if let Ok(mut messages) = context::project(history, budget.saturating_sub(note_bytes))
+            && let Some(ChatCompletionRequestMessage::System(system)) = messages.first_mut()
+            && let ChatCompletionRequestSystemMessageContent::Text(text) = &mut system.content
+        {
+            text.push_str(preference_note);
+            return Ok(messages);
+        }
     }
-    messages
+    context::project(history, budget)
 }
 
 /// 可以和同一轮其他调用并发执行的工具：只读、无副作用、不打开可见窗口。

@@ -135,6 +135,7 @@ async fn run_subagent(
     if let Some(context) = task.context {
         messages.push(
             ChatCompletionRequestUserMessageArgs::default()
+                .name("subagent_context")
                 .content(format!("主 agent 提供的上下文：\n{context}"))
                 .build()
                 .map_err(|err| err.to_string())?
