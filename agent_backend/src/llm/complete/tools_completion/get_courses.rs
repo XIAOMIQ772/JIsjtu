@@ -5,11 +5,11 @@ use super::clip;
 
 #[derive(serde::Deserialize)]
 pub(super) struct Course {
-    id: u64,
+    pub(super) id: u64,
     #[serde(default)]
-    name: String,
+    pub(super) name: String,
     #[serde(default)]
-    course_code: Option<String>,
+    pub(super) course_code: Option<String>,
     #[serde(default)]
     term: Option<Term>,
     #[serde(default, deserialize_with = "null_default")]
@@ -77,9 +77,8 @@ pub(super) fn render_courses(courses: &[Course]) -> String {
     text
 }
 
-pub(super) async fn get_courses(_: serde_json::Value) -> Result<String, String> {
-    let canvas = Canvas::from_env()?;
-    let courses: Vec<Course> = canvas
+pub(super) async fn active_courses() -> Result<Vec<Course>, String> {
+    Canvas::from_env()?
         .get_all(
             "/api/v1/courses",
             &[
@@ -89,7 +88,11 @@ pub(super) async fn get_courses(_: serde_json::Value) -> Result<String, String> 
             ],
             "课程列表",
         )
-        .await?;
+        .await
+}
+
+pub(super) async fn get_courses(_: serde_json::Value) -> Result<String, String> {
+    let courses = active_courses().await?;
     Ok(clip(&render_courses(&courses)))
 }
 
