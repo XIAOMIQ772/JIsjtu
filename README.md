@@ -1,22 +1,14 @@
 # JIsjtu · 交我集
 
-上海交通大学校园信息查询助手兼学习工作小助手。支持通过自然语言查询 Canvas 课程、作业、DDL、公告与成绩，读取教务系统课表、考试安排和 GPA，找空教室、看图书馆人数，搜索和阅读水源帖子，读取与搜索校园邮件、阅读 PDF、帮写并提交作业，也可运行命令、处理文件和完成编码任务，支持url/名称唤起任意网站
+交我集是给上海交通大学学生用的校园助手。可以用自然语言查课表和作业截止时间、比较选课社区里的教师评价、读课件、写作业并提交到 Canvas。也可以查考试和成绩、估算 GPA、找空教室、读校园邮件和水源讨论，或让助手处理本地文件、运行命令、打开指定网址。
 
-现已支持多sessions热切换，skills读取，以及交大sso自动化登陆and持久化使用
+运行 `JIsjtu` 或 `JIsjtu --tui` 进入终端界面（TUI），运行 `JIsjtu --web` 或 `JIsjtu web` 打开网页。两个界面共用 Rust 后端，通过 WebSocket 接收回答和工具进度，会话保存在本机。
 
-建议使用deepseek相关模型以提升运行速度
+以往的版本记录见 [CHANGELOG.md](CHANGELOG.md)。
 
-前端使用 HTML / CSS / JavaScript，后端使用 Rust + Axum，通过 WebSocket 传递回答与工具进度。`JIsjtu` 和源码运行的 `cargo run` 都默认使用终端界面；显式指定 `--web` 或 `web` 才打开网页，无需单独启动前端。
+## 快速开始
 
-更新内容见 [CHANGELOG.md](CHANGELOG.md)。
-
-## 速度启动
-下载JIsjtu.zip
-解压后查看 README.md。
-
-## 使用安装包
-
-仓库中的 [JIsjtu.zip](JIsjtu.zip) 适用于 **Apple Silicon Mac（arm64）**。下载、解压，在解压目录运行：
+仓库中的 [JIsjtu.zip](JIsjtu.zip) 适用于 **Apple Silicon Mac（arm64）**。下载并解压，在解压目录运行下面的命令。
 
 ```sh
 sh install.sh
@@ -24,19 +16,19 @@ sh install.sh
 
 脚本不需要 sudo，会将程序和前端安装到 `~/.local/share/JIsjtu`，在 `~/.local/bin` 注册 `JIsjtu` 命令，并配置 zsh / bash 的 PATH。重复安装保留已有 `.env`。安装完成后可以删除解压目录。
 
-首次安装后编辑配置文件（`.env` 是文件，不是目录）：
+首次安装后，用文本编辑器打开配置文件。
 
 ```sh
 vim ~/.local/share/JIsjtu/.env
 ```
 
-填写模型服务、Canvas、邮箱等配置，再新开终端运行：
+对话需要填写 `OPENAI_BASE_URL`、`OPENAI_API_KEY` 和 `MODEL`。模型服务需支持流式 Chat Completions 和工具调用。校园账号按要用的功能填写，保存后新开一个终端启动助手。
 
 ```sh
 JIsjtu
 ```
 
-`JIsjtu` 默认启动 TUI，可输入 `/sessions` 切换会话，`/today` 看今日简报、`/ddl` 汇总作业截止、`/week` 看本周课表（输入 `/` 可打开命令面板）。运行 `JIsjtu --web` 或 `JIsjtu web` 才会打开网页，默认地址为 `http://127.0.0.1:13376`。终端需保持运行，按 `Ctrl+C` 停止。`JIsjtu --config` 可查看配置路径，`JIsjtu --tui` 显式使用终端界面，`JIsjtu --sso-login` 单独检查登录。配置修改或升级后需重启。
+在终端输入 `/` 可打开命令面板。`/resume` 打开历史会话，`/today` 看今日简报，`/ddl` 汇总作业截止，`/week` 看本周课表。网页模式的默认地址是 `http://127.0.0.1:13376`。保持终端运行，按 `Ctrl+C` 退出。用 `JIsjtu --config` 查看配置文件路径，修改配置或升级后重启生效。
 
 ## 配置
 
@@ -44,28 +36,24 @@ JIsjtu
 
 | 变量 | 用途 |
 | --- | --- |
-| `OPENAI_BASE_URL` | OpenAI 兼容服务的接口地址； |
+| `OPENAI_BASE_URL` | 模型服务的 API 基础地址，例如 `https://api.openai.com/v1`。程序会自行拼接 `/chat/completions` |
 | `OPENAI_API_KEY` | 模型服务密钥 |
 | `MODEL` | 模型名称 |
 | `CANVAS_API_TOKEN` | 在 Canvas 的「账户 → 设置」创建访问令牌，用于课程、作业、课件和课堂签到记录查询 |
 | `EMAIL_USER_ACCOUNT` / `EMAIL_USER_PASSWORD` | jAccount 账号或交大邮箱地址，以及 jAccount 登录密码 |
 | `JCOURSE_EMAIL` / `JCOURSE_PASSWORD` | 查选课评价时填写选课社区账号（邮箱前缀或完整的 `@sjtu.edu.cn` 邮箱）和独立的社区密码 |
 | `IMAP_PASSWORD` | 可选，独立的邮箱密码或客户端授权码；留空时沿用 `EMAIL_USER_PASSWORD` |
-| `IMAP_HOST` / `IMAP_PORT` | 邮箱服务器；学校邮箱可设置 `imap.sjtu.edu.cn`、`993` |
+| `IMAP_HOST` / `IMAP_PORT` | 收取交大邮件时将主机填为 `mail.sjtu.edu.cn`，加密端口默认为 `993`。[交大邮箱服务器信息](https://net.sjtu.edu.cn/info/1191/2699.htm) |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_PASSWORD` | 发信默认使用 `mail.sjtu.edu.cn:465`（TLS）。未单设密码时依次使用 `IMAP_PASSWORD`、`EMAIL_USER_PASSWORD` |
 | `AGENT_BIND_ADDR` | HTTP 和 TCP 共用的监听 IP，默认 `127.0.0.1`。需要局域网访问时可指定本机的局域网 IP |
 | `AGENT_HTTP_PORT` / `AGENT_TCP_PORT` | HTTP 与 TCP 端口，默认 `13376` / `8081` |
 | `AGENT_REMINDERS` | macOS 运行期间提醒上课与作业截止，设为 `0` 可关闭 |
-| `AGENT_NO_BROWSER` | 设置此变量可跳过自动打开浏览器 |
+| `AGENT_NO_BROWSER` | 设置后，Web 模式启动时跳过自动打开聊天页面，可手动访问终端打印的地址 |
 | `AGENT_FRONTEND_DIR` | 可选，指定前端静态文件目录 |
 | `AGENT_SKILLS_DIR` | 可选，指定技能目录；默认找当前目录或上一级的 `skills/` |
 | `SJTU_TERM_START` / `SJTU_TERM_WEEKS` / `SJTU_TERM_NAME` | 可按教务处校历填写第 1 周周一（YYYY-MM-DD）、总周数（默认 18）和学期名称 |
 
-模型配置用于对话；Canvas 和邮箱配置按需填写。
-
 ## 校园功能
-
-除了基础的文件、命令与网页工具，小集内置了以下校园查询，均可直接用自然语言触发：
 
 | 想做的事 | 工具 | 数据来源 |
 | --- | --- | --- |
@@ -74,70 +62,74 @@ JIsjtu
 | 考试时间与考场 | `exam_schedule`：倒计时、考场、未公布标注 | 教学信息服务网 |
 | 成绩、GPA 和排名 | `score_report` 根据本人成绩估算总 GPA、学期 GPA 和加权均分。`view=official` 提供官方本人查询入口及学院排名证明办理方式 | 教学信息服务网、学院办事指南 |
 | 离毕业还差什么 | `degree_progress`：培养方案各类要求的要求/已获得学分与缺口 | 教学信息服务网 |
+| 我有哪些课 | `get_courses` 列出进行中的 Canvas 课程和课程 ID，并显示已有的课号、班号、学期和授课教师 | Canvas |
 | 作业截止 | `get_deadlines`（跨课程）、`get_exam`（单门课，含提交状态） | Canvas |
 | 课程公告 | `get_announcements` | Canvas |
 | 平时成绩与评语 | `get_grades`：逐项得分、班级均分/最高/最低、权重、老师评语 | Canvas |
-| 找空教室 | `find_classroom`：按教学周算空闲节次，附教室实时人数；也能查某间教室当天课表 | 教室信息服务（公开） |
+| 找空教室 | `find_classroom` 按教学周和节次查空闲教室，也能查指定教室的排课。查当天且传感器有数据时会显示实时人数 | 教室信息服务（公开） |
 | 图书馆人多吗 | `library_status`：各馆在馆人数与占比 | 图书馆人数统计（公开） |
-| 选哪位老师、平时点名吗 | `course_reviews` 按课程比较授课教师，按教师分课程汇总评分、点评条数和学生反馈。支持查签到、给分、工作量和避雷，附反馈学期及原文链接 | [交大选课社区](https://course.sjtu.plus/) |
+| 选哪位老师、往年点名吗 | `course_reviews` 按课程比较老师，或按老师分课程查均分、点评数、给分和工作量。点名体验附反馈学期和原文，读到的点评未提及时会标明未知。合授条目的评分属于教师组 | [交大选课社区](https://course.sjtu.plus/) |
 | 水源 | `get_hotnews` 热帖简报、`shuiyuan_search` 搜索、`shuiyuan_topic` 读帖子、`shuiyuan_post` 查看版块、发表主题或回帖 | 水源社区 |
-| 邮件 | `mail_fetch` 列出、阅读、搜索、下载附件，`send_email` 发送纯文本邮件 | 学校邮箱 |
+| 邮件 | `mail_fetch` 列出邮件、按发件人或主题搜索、阅读正文和下载附件，`send_email` 发送纯文本邮件 | 学校邮箱 |
 | 找课件、下载整门课 | `search_files` 跨课程搜索，`course_files` 的 `download_all` 下载指定课程中可访问的全部文件，默认目录为 `~/Downloads/Canvas-<课程id>`。文件名带 Canvas ID，重跑会跳过已有且大小匹配的文件 | Canvas |
-| 读课件、文档 | macOS 上的 `pdf_analysis` 离线识别扫描页和混排截图。遇到需要看原图的公式或图表，`image_page` 会把指定的一页发给当前配置的模型。`read_office` 可读 Word 表格和公式、PowerPoint 讲者备注及 Excel 工作表 | 本地文件 |
-| 写作业、交作业 | `homework` 结合老师的说明、评分细则和附件读题，交前检查成品和必交文件。可以先看预览，也可以事先说“写完直接交”。确认后返回 Canvas 的提交时间和次数 | Canvas、本地文件 |
+| 读课件、文档 | `pdf_analysis` 可提取 PDF 文本。在 macOS 上还支持离线识别扫描页和截图，或用 `image_page` 将指定页发送给支持图片输入的模型核对公式和图表。`read_office` 可读 `.docx` 的表格和公式、`.pptx` 的讲者备注和 `.xlsx` 的工作表 | 本地文件 |
+| 写作业、交作业 | `homework` 读取题目、评分细则和附件，检查答案和必交文件后，可提交在线文本或上传文件。聊天中可先看预览，在同一会话 30 分钟内回复“提交”，也可事先说“写完直接交”。核实 Canvas 回执后会显示提交时间和次数 | Canvas、本地文件 |
 | 上课、作业主动提醒 | 程序运行期间，macOS 在上课前 10 分钟、未完成作业截止前 1 小时发送通知。课表需要已登录的教务会话，作业需要 Canvas 令牌 | 教务系统、Canvas |
-| 盯一节课的签到 | 对小集说“帮我盯明早 8 点的大学物理有没有发起签到”。`watch_attendance` 为这一节课安排监看，在 Canvas「点名签到」里发现时段内的新记录就发 macOS 通知 | Canvas 课堂签到 |
+| 这节课发起签到了吗 | 对助手说“帮我盯明早 8 点的大学物理有没有发起签到”。`watch_attendance` 发现这节课时段内的新签到记录就发 macOS 通知，并附上页面可见的本人签到状态 | Canvas 课堂签到 |
+| 导入手机日历 | `export_calendar` 把按周展开的课表、已公布的考试和未来 60 天未完成的作业截止导出为 `.ics`，默认保存在 `~/Downloads`。考试和作业截止附带提醒 | 教务系统、Canvas |
 
-例如 08:00 开始的课，签到监看在北京时间 07:50 至 08:05 每 30 秒刷新一次。中途提出请求会从当前时刻开始。监看期间请保持 Mac 唤醒并运行 JIsjtu。每条新记录提醒一次，有本人签到状态时一并显示。监看期间如始终无法读取记录，结束时会收到失败提醒。程序重启后会恢复尚未过期的任务。
-| 导入手机日历 | `export_calendar`：课表按周展开、考试、未交作业截止导出为 .ics，带提醒 | 教务系统、Canvas |
+签到监看需要 macOS、Python 3、有效的 Canvas 令牌，且该课的 Canvas 菜单已开放「点名签到」。给出课程、日期和开始时间就能安排监看，时间不全时会用教务课表定位。例如 08:00 的课会在 07:50 至 08:05 每 30 秒查一次，中途提出请求就从当时开始。请保持 Mac 唤醒并运行 JIsjtu。每条新记录只提醒一次。如果整个时段都读不到签到页面，结束时会通知查询失败。重启后会恢复尚未过期的任务。
 
-所有时间按北京时间输出。内置 2026–2027 秋季学期从 9 月 14 日开始，共 18 周，第 17–18 周为考试周。第 1 节课 08:00 开始，每节 45 分钟。截至 2026 年 11 月 26 日，教务处校历目录仅列出该学年的秋季学期。春季校历公布后，可按官方日期在 `.env` 填写 `SJTU_TERM_START` 和 `SJTU_TERM_WEEKS`。[教务处历年校历](https://jwc.sjtu.edu.cn/jxxl/lnxl.htm)
+课表、考试、作业截止和签到监看均按北京时间。内置作息第 1 节从 08:00 开始，每节 45 分钟。内置的 2026–2027 学年秋季学期从 2026 年 9 月 14 日开始，共 18 周，第 17–18 周为考试周。要使用尚未内置的学期，可按教务处公布的日期在 `.env` 填写 `SJTU_TERM_START`（第 1 周周一）和 `SJTU_TERM_WEEKS`。[教务处历年校历](https://www.jwc.sjtu.edu.cn/jxxl/lnxl.htm)
 
 教务系统和水源需要 jAccount 登录态：浏览器助手先在后台打开站点入口页走完单点登录，再在同一页面里请求查询接口，多项查询共用一次浏览器会话；jAccount 会话过期时会自动重新登录一次。
 
-同一轮里模型发出的多个只读查询会并发执行，结果仍按调用顺序返回；命令、写文件、提交作业等有副作用的调用保持顺序执行。
+同一轮中，如果全部调用都是支持并行的只读查询，程序会并发执行并按调用顺序返回结果。一轮里包含命令、写文件或提交作业时，整轮依次执行。
 
 代发邮件或水源帖子时，先核对会话中显示的收件人、版块或主题和完整正文，然后在同一会话回复预览给出的 `确认发送 <口令>`。口令 15 分钟内有效，每个会话只保留最新一份待发草稿。
 
-配置好后可以先自检，逐项确认模型、Canvas、邮箱、Python 依赖、浏览器、jAccount 与校历是否可用：
+安装版可用下面的命令检查配置或直接调用工具。`--doctor` 检查模型接口能否访问、Canvas 令牌和 IMAP 登录，并检查本地浏览器、Python 依赖、已保存的 jAccount 状态和校历。验证当前 jAccount 登录可用 `JIsjtu --sso-login`。
 
 ```sh
-JIsjtu --doctor                 # 安装包
-cargo run --locked -- --doctor  # 源码
+JIsjtu --doctor
+JIsjtu --tool get_time_stamp
+JIsjtu --tool find_classroom '{"building":"东上院","date":"tomorrow","start_period":3,"end_period":4}'
 ```
 
-调试时可以不经过模型直接调用某个工具：
+源码运行时，先从仓库根目录进入 `agent_backend`，再将同样的参数传给程序。
 
 ```sh
+cd agent_backend
+cargo run --locked -- --doctor
 cargo run --locked -- --tool get_time_stamp
-cargo run --locked -- --tool find_classroom '{"building":"东上院","date":"tomorrow","start_period":3,"end_period":4}'
 ```
 
 ## jAccount 自动登录
 
-Agent 启动时自动运行 `sso_login`：从 `.env` 读取 `EMAIL_USER_ACCOUNT` 和 `EMAIL_USER_PASSWORD`，默认在后台无窗口的专用浏览器中打开 jAccount，用本地 `ddddocr` 识别图片验证码并填写。登录过程不弹出窗口、不抢占主窗口焦点。收到认证接口确认后保存登录状态、关闭登录页；已有有效会话时直接复用。交大邮箱地址会自动取 `@` 前的账号部分。
+打开 TUI 或网页界面时，程序会检查已保存的 jAccount 会话。需要登录时，用 `.env` 中的 `EMAIL_USER_ACCOUNT` 和 `EMAIL_USER_PASSWORD` 在后台浏览器登录，本地用 `ddddocr` 识别图片验证码。交大邮箱地址会自动取 `@` 前的账号部分。要跳过启动检查，可以设置 `AGENT_SSO_AUTO_LOGIN=0`，之后按需运行 `JIsjtu --sso-login`。
 
-需要本机安装 Edge、Chrome 或 Chromium，以及 Python 3.10+；默认优先使用 Edge，未安装时再查找 Chrome / Chromium。在仓库根目录安装 Python 依赖：
+使用教务、水源等浏览器工具时，需要本机安装 Edge、Chrome 或 Chromium，以及 Python 3.10+。程序优先使用 Edge。安装版设置 Python 环境的方法见[随包说明](agent_backend/packaging/README.md)。
+
+源码用户可在仓库根目录运行下面的命令，创建独立的 Python 环境。
 
 ```sh
-python3 -m pip install -r agent_backend/requirements-sso.txt
+python3 -m venv ~/.venvs/jisjtu
+~/.venvs/jisjtu/bin/python -m pip install -r agent_backend/requirements-sso.txt
 ```
 
-安装包内附 `requirements-sso.txt`，安装后也会复制到应用目录。安装包使用者可按随包 README 创建 Python 虚拟环境，再安装此依赖清单。在 `.env` 中用 `AGENT_SSO_PYTHON` 指定该环境的 Python。`AGENT_SSO_BROWSER` 可指定浏览器可执行文件，优先于自动查找。
+在 `agent_backend/.env` 中将 `AGENT_SSO_PYTHON` 指向装好依赖的解释器。上述示例对应 `AGENT_SSO_PYTHON=${HOME}/.venvs/jisjtu/bin/python`。`AGENT_SSO_BROWSER` 可指定浏览器可执行文件，优先于自动查找。
 
-登录状态默认保存在当前工作目录的 `.sso/`，可用 `AGENT_SSO_DIR` 指定其他私有目录；不同账号使用各自的配置，同一账号切换浏览器或窗口模式时使用独立的浏览器配置并同步已保存的 Cookie。Cookie 不会返回给模型或写入聊天记录。校园查询复用已保存的登录状态，非校园网站使用独立的匿名浏览器配置。常用浏览器的其他配置不会自动获得该会话。Canvas 的现有 API 工具仍使用 `CANVAS_API_TOKEN`。
+登录状态按账号保存在当前工作目录的 `.sso/`，可用 `AGENT_SSO_DIR` 指定其他私有目录。教务、水源等校园网站复用已保存的登录状态，校外网址使用独立的匿名浏览器配置。Canvas 使用 `CANVAS_API_TOKEN`，选课社区使用自己的一组账号和密码。
 
-网页工具通过 `mode` 区分展示与查询：`show` 打开可见网页并保留给用户；`read` 在后台返回正文和链接，完成后自动关闭临时页面及其弹窗，失败、取消或助手进程断开时也会清理。后台登录和查询使用临时浏览器配置，任务结束后退出专用浏览器并删除临时配置，已保存的登录状态仍可复用；独立管理进程负责在助手意外退出时回收浏览器，无响应时只终止自己创建的后台进程。水源工具 `watch_shuiyuan` 默认 `show`，只有让助手查询、阅读或总结内容时才使用 `read`；`watch_eduinfo` 和 `open_usual_website` 默认 `read`。省略 `mode` 或传 `null` 使用对应工具的默认值，显式传值会覆盖默认值。查询课程、检索资料等中间操作应明确使用 `read`，在聊天中给出结果。自动清理仅作用于本次操作创建的后台浏览器与临时上下文，用户已有页面及明确展示的窗口不受影响。需要调试登录或查询时，可设置 `AGENT_SSO_HEADLESS=0` 并重启 Agent。
+想亲自浏览时可以说“打开水源”，想让助手后台查询可以说“查一下水源最近的讨论”。`watch_shuiyuan` 默认展示并保留页面（`mode=show`），`watch_eduinfo` 和 `open_usual_website` 默认返回正文和链接（`mode=read`）。后台查询结束后会清理它创建的临时页面和浏览器。
 
-模型自行编写的脚本也应使用后台浏览器，并用 `try/finally` 关闭自己创建的临时页面、窗口和子进程；为分析文件时优先下载后读取，避免唤起桌面应用。
-
-验证码错误最多尝试三次，账号密码错误立即停止。后台登录失败时关闭隐藏登录页、提示原因，Agent 继续启动；需要手动验证时，在 `.env` 设置 `AGENT_SSO_HEADLESS=0` 后重新启动登录，可见模式会保留失败的登录页供用户处理。手动完成验证后再次运行 `sso_login` 即可保存登录状态，再改回 `AGENT_SSO_HEADLESS=1` 恢复后台登录。`EMAIL_USER_PASSWORD` 必须是 jAccount 登录密码；邮箱客户端授权码请单独填入 `IMAP_PASSWORD`。设 `AGENT_SSO_AUTO_LOGIN=0` 可跳过启动检查，之后仍能调用无参数工具 `sso_login`。也可在 `agent_backend` 目录单独运行：
+验证码最多尝试三次，账号密码错误时会停止登录并提示原因，助手仍可启动。需要手动验证时，在 `.env` 设置 `AGENT_SSO_HEADLESS=0`，运行 `JIsjtu --sso-login`。在保留的登录页完成验证后，再运行一次该命令保存会话，然后改回 `AGENT_SSO_HEADLESS=1` 并重启。源码用户在 `agent_backend` 目录运行以下命令。
 
 ```sh
 cargo run --locked -- --sso-login
 ```
 
-SSO 测试使用本地模拟认证服务、临时浏览器配置及模拟账号，不访问真实 jAccount：
+开发时可在仓库根目录运行 SSO 测试。它使用本地模拟认证服务、临时浏览器配置和模拟账号。
 
 ```sh
 python3 -m unittest discover -s agent_backend/scripts -p test_sso.py -v
@@ -145,17 +137,17 @@ python3 -m unittest discover -s agent_backend/scripts -p test_sso.py -v
 
 ## 会话切换
 
-左侧「我的对话」显示已保存的会话，点击即可切换，不需要刷新页面。「开启new session」会建立独立上下文，原会话仍保留。每个会话的输入草稿、滚动位置和工具进度独立；切走后任务继续执行，列表显示处理状态，切回时同步完整记录。草稿和滚动位置在当前页面内保留，聊天记录与模型上下文保存到磁盘，刷新或服务重启后仍可继续。
-
-在 TUI 输入 `/resume`（或 `/sessions`）打开历史会话。用 ↑ / ↓ 选中一条，Enter 打开，`r` 刷新，Esc 返回聊天。按 `d` 或 Delete 会显示待删除会话的标题，按 `y` 永久删除，按 `n` 或 Esc 取消。正在生成回复的会话需等回复结束后再删。删除当前会话会进入新的空白对话。
+在 TUI 输入 `/new` 新建对话，输入 `/resume`（或 `/sessions`）打开历史会话。用 ↑ / ↓ 选中一条，Enter 打开，`r` 刷新，Esc 返回聊天。按 `d` 或 Delete 会显示待删除会话的标题，按 `y` 永久删除，按 `n` 或 Esc 取消。正在生成回复的会话需等回复结束后再删。删除当前会话会进入新的空白对话。
 
 列表按最近更新时间排序，并标出当前会话和正在处理的会话。模型回复中也可以切换，切回后同步最新内容。每个会话的草稿和滚动位置在本次 TUI 运行期间独立保留。
+
+网页左侧的「我的对话」显示已保存的会话，点击即可切换。「开启new session」会建立独立上下文。切走后任务继续执行，切回时同步完整记录。草稿和滚动位置在当前页面内保留，聊天记录与模型上下文保存在磁盘，刷新或服务重启后仍可继续。
 
 会话由服务端管理，不依赖模型调用文件工具保存。`sessions/<稳定ID>.json` 保存完整模型消息（含工具调用及结果）、页面事件、创建时间和标题；标题取首次提问的前 28 个字符。`sessions/config.json` 是旧的格式示例，不作为聊天记录读取。可通过 `AGENT_SESSIONS_DIR` 指定存储位置，默认使用当前目录或上一级已有的 `sessions/`。
 
 HTTP 接口支持列出会话（`GET /api/sessions`）、新建会话（`POST /api/sessions`）、读取或删除指定会话（`GET` 或 `DELETE /api/sessions/{id}`）。WebSocket `/ws?session_id=<id>` 恢复会话，发送 `{"type":"switch_session","session_id":"<id>"}` 可以切换。服务端通过 `session_snapshot` 和 `session_event` 同步会话内容，在当前打开的会话被删除时发送 `session_deleted`。
 
-本次接口需要配套新版后端。前端测试使用本地模拟模型，不消耗真实 API 额度：安装 Playwright 后运行 `node agent_frontend/tests/sessions.cjs`；`PLAYWRIGHT_MODULE` 可指定已有 Playwright 模块路径，`AGENT_TEST_BINARY` 可指定已构建后端路径。
+开发时可在仓库根目录运行 `node agent_frontend/tests/sessions.cjs` 验证网页会话。脚本使用本地模拟模型，需要 Playwright、浏览器和已构建的后端。默认使用 Edge 和 `agent_backend/target/aarch64-apple-darwin/release/agent`。可用 `BROWSER_CHANNEL`、`PLAYWRIGHT_MODULE` 和 `AGENT_TEST_BINARY` 指定其他浏览器通道、模块和程序路径。
 
 ## 技能
 
@@ -180,15 +172,9 @@ description: 校园卡余额与消费记录查询流程
 
 后端启动时扫描技能目录，把 `name` 和 `description` 注入系统提示词；模型判断请求相符时，会先用 `read` 工具读取该文件全文，再按其中的步骤执行。技能正文只在需要时才进入上下文，所以可以写得很长。
 
-启动日志会打印加载结果：
+新增技能或修改名称、描述后请重启。启动日志会列出已加载的技能，恢复历史会话后也能使用更新的清单。
 
-```
-已从 skills 加载 2 个技能：campus-card、exam-query
-```
-
-技能只在启动时扫描，改完要重启服务。
-
-仓库自带的技能：
+常用校园技能如下。
 
 | 技能 | 用途 |
 | --- | --- |
@@ -197,21 +183,22 @@ description: 校园卡余额与消费记录查询流程
 | `exam-review-plan` | 按真实考试时间与剩余作业倒排复习计划，整理薄弱科目课件重点 |
 | `weekly-study-plan` | 结合课表空档、DDL 与考试排一周学习计划，并推荐自习地点 |
 | `email-to-teacher` | 起草请假、延期、成绩疑问等邮件，在用户确认后代发 |
-| `lecture-notes` | 下载课件、分页阅读，整理概念、公式、易错点与自测题 |格式细节和目录查找顺序见 [skills/README.md](skills/README.md)。
+| `lecture-notes` | 下载课件、分页阅读，整理概念、公式、易错点与自测题 |
+
+可参考仓库里的[选课调研技能](skills/course-selection-research/SKILL.md)编写自己的技能。
 
 ## 从源码运行
 
-需要支持项目所用 API 的近期稳定版 Rust（已在 Rust 1.97.1 验证），无需 Node。克隆项目后：
+项目已在 Rust 1.97.1 验证。macOS 从源码编译还需要 Xcode 命令行工具和 macOS SDK，用于构建 PDF 与文字识别模块。克隆仓库后，从仓库根目录运行以下命令。
 
 ```sh
 cd agent_backend
-cp .env.example .env
-# 编辑 .env，填写个人配置
+test -e .env || cp .env.example .env  # 首次创建配置，已有文件会保留
+# 编辑 .env，填写模型服务和要使用的校园功能
 cargo run --locked           # 默认 TUI
-cargo run --locked -- --web  # 显式启动网页界面
 ```
 
-保留同级 `agent_frontend` 目录。前端可直接编辑并刷新网页。
+要使用网页界面，在 `agent_backend` 目录运行 `cargo run --locked -- --web`。保留同级的 `agent_frontend` 目录，修改网页文件后刷新即可查看效果。
 
 ## 构建安装包
 
@@ -231,15 +218,13 @@ AGENT_PACKAGE_BINARY="$PWD/target/release/agent" sh scripts/package.sh
 
 默认按当前系统及架构构建；Intel Mac、Apple Silicon Mac、Linux 需要分别构建。Python 和浏览器需在目标机器安装，SSO 依赖按包内说明安装。Linux 包仍依赖相应系统动态库，当前安装脚本不支持 Windows。
 
-安装与启动验证：
+构建本机的 release 和安装包后，在 `agent_backend` 目录运行下面的命令。脚本会校验 ZIP 内容，并在临时目录验证安装、升级和配置保留。
 
 ```sh
-python3 scripts/test-package.py
-python3 scripts/test-package.py --smoke
-python3 scripts/test-package.py --archive ../JIsjtu.zip --smoke
+python3 scripts/test-package.py --archive ../JIsjtu.zip
 ```
 
-`--smoke` 在临时目录安装，检查真实程序和安装命令默认进入 TUI，并验证显式 Web 模式的 HTTP、静态文件与 TCP 服务，不修改真实 shell 配置。安装脚本支持 `--prefix /绝对路径`、`--no-path`、`--profile /配置文件路径`。
+安装脚本支持 `--prefix /绝对路径`、`--no-path`、`--profile /配置文件路径`。
 
 ## 使用边界
 
