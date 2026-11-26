@@ -88,9 +88,11 @@ async function until(check, message) {
   const base = `http://127.0.0.1:${port}`;
   const env = { ...process.env, OPENAI_API_KEY: 'fake-test-key', OPENAI_BASE_URL: `http://127.0.0.1:${model.address().port}/v1`,
     MODEL: 'fake', AGENT_HTTP_PORT: String(port), AGENT_TCP_PORT: String(tcp), AGENT_NO_BROWSER: '1', AGENT_SSO_AUTO_LOGIN: '0',
+    AGENT_BIND_ADDR: '127.0.0.1', AGENT_REMINDERS: '0',
     AGENT_FRONTEND_DIR: path.join(repo, 'agent_frontend'), AGENT_SKILLS_DIR: path.join(root, 'skills'),
     AGENT_SESSIONS_DIR: path.join(root, 'sessions'), HTTP_PROXY: '', HTTPS_PROXY: '', ALL_PROXY: '',
     http_proxy: '', https_proxy: '', all_proxy: '', NO_PROXY: '*', no_proxy: '*' };
+  delete env.AGENT_DREAMING;
   const binary = process.env.AGENT_TEST_BINARY || path.join(repo, 'agent_backend/target/aarch64-apple-darwin/release/agent');
   async function start() {
     processHandle = spawn(binary, ['--web'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -248,7 +250,16 @@ async function until(check, message) {
   await stalled.locator('#connection-notice-text').filter({ hasText: '连接超时' }).waitFor({ timeout: 15000 });
   assert(await stalled.locator('#retry-connection').isVisible(), 'Stalled connection must offer retry');
   await stalled.close();
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await testDreaming(page, base, async () => {
+    await stop();
+    env.AGENT_DREAMING = '1';
+    await start();
+    await page.reload();
+    await page.getByText('小集在线', { exact: true }).waitFor();
+  });
   console.log('PASS: real SSE model streaming, HTTP + WebSocket sessions, partial-answer refresh and switching, persisted answers without duplicates, fragmented tools, interruption recovery, incremental TCP output, mobile layouts.');
+  console.log('PASS: opt-in preference consolidation, source deletion, durable forgetting and ephemeral Web memory commands.');
   console.log(`Artifacts: ${root}`);
   await stop();
 })().catch(error => { console.error(error); console.error(log); process.exitCode = 1; }).finally(async () => {
@@ -257,3 +268,85 @@ async function until(check, message) {
   if (processHandle?.exitCode === null) processHandle.kill('SIGTERM');
   model.closeAllConnections(); model.close();
 });
+
+async function testDreaming(page, base, restart) {
+  const active = page.locator('.session-item.active');
+  const memory = page.locator('#memory-status');
+  const probe = '说明一下什么是函数';
+  const privateText = '来源会话独有的文字 memory-e2e-1247';
+  const chinese = '默认用中文回答';
+  const bullets = '默认分点回答';
+  async function newChat() {
+    const previous = await active.getAttribute('data-session-id');
+    await page.locator('#chat-nav').click();
+    await until(async () => {
+      const id = await active.getAttribute('data-session-id');
+      return id && id !== previous;
+    }, 'New memory test session did not open');
+    await page.getByText('小集在线', { exact: true }).waitFor();
+    assert.equal(await memory.count(), 0);
+    return active.getAttribute('data-session-id');
+  }
+  async function send(text) {
+    await page.locator('#input').fill(text);
+    await page.locator('#send').click();
+  }
+  async function ask(text, expectedCalls = 1) {
+    const index = calls.length;
+    const id = await active.getAttribute('data-session-id');
+    await send(text);
+    await until(async () => calls.length > index &&
+      !(await (await fetch(`${base}/api/sessions/${id}`)).json()).session.busy, 'Model turn did not finish');
+    assert.equal(calls.length, index + expectedCalls, 'Unexpected number of model requests');
+    return JSON.stringify(calls.at(-1).messages);
+  }
+  async function status(command, match) {
+    const index = calls.length;
+    await send(command);
+    await memory.filter({ hasText: match }).waitFor();
+    assert.equal(index, calls.length, 'Memory commands are handled locally');
+    return memory.innerText();
+  }
+  async function probeFresh() {
+    await newChat();
+    return ask(probe);
+  }
+  const baseline = await probeFresh();
+  const disabledSource = await active.getAttribute('data-session-id');
+  await ask('以后请用中文回答');
+  assert.equal(await probeFresh(), baseline, 'Cross-session memory must be opt-in');
+  assert.equal((await fetch(`${base}/api/sessions/${disabledSource}`, { method: 'DELETE' })).status, 204);
+
+  await restart();
+  const source = await newChat();
+  await ask(privateText);
+  await ask('请分点回答');
+  await ask('请分点回答');
+  assert.equal(await probeFresh(), baseline, 'Repeated requests in a single conversation count as one source');
+  await page.locator(`[data-session-id="${source}"]`).click();
+  await ask('以后请用中文回答');
+  const secondSource = await newChat();
+  await ask('请分点回答');
+
+  await restart();
+  const recalled = await probeFresh();
+  assert(recalled.includes(chinese) && recalled.includes(bullets), 'The next model request should use both preferences after a restart');
+  assert(!recalled.includes(privateText), 'Only the recognized preferences may cross sessions');
+  const report = await status('/memory', chinese);
+  assert(report.includes(bullets));
+  const reader = await active.getAttribute('data-session-id');
+  const record = fs.readFileSync(path.join(root, 'sessions', `${reader}.json`), 'utf8');
+  assert(!record.includes(chinese) && !record.includes('/memory'), 'Recall and command output must remain ephemeral');
+
+  assert.equal((await fetch(`${base}/api/sessions/${source}`, { method: 'DELETE' })).status, 204);
+  assert.equal(await probeFresh(), baseline, 'Deleting the source must revoke the explicit and corroborated preferences');
+  await page.locator(`[data-session-id="${secondSource}"]`).click();
+  await ask('以后请用中文回答');
+  assert((await probeFresh()).includes(chinese));
+  await status('/forget', /清空|清除|忘记/);
+  assert.equal(await probeFresh(), baseline);
+  await restart();
+  assert.equal(await probeFresh(), baseline, 'Cleared preferences must stay cleared across restarts');
+
+
+}

@@ -228,6 +228,7 @@ function appendNotice(text, isError = false) {
   el.textContent = text;
   messagesEl.appendChild(el);
   scrollToBottom(false, wasAtBottom);
+  return el;
 }
 
 function createTool(name, args) {
@@ -256,6 +257,7 @@ function handle(event) {
   const wasAtBottom = atBottom();
   switch (event.type) {
     case "user":
+      document.getElementById("memory-status")?.remove();
       finishStreamingAnswer();
       appendMessage(event.text || "", "user"); break;
     case "tool_call": {
@@ -449,6 +451,14 @@ function forgetSession(id) {
 }
 
 function receive(payload) {
+  if (payload.type === "memory_status") {
+    if (payload.session_id === selectedId && readyId === selectedId) {
+      document.getElementById("memory-status")?.remove();
+      appendNotice(payload.text).id = "memory-status";
+      scrollToBottom(true);
+    }
+    return;
+  }
   if (payload.type === "session_deleted") {
     forgetSession(payload.session_id);
     renderSessionList();
@@ -578,8 +588,14 @@ formEl.addEventListener("submit", (event) => {
   }
   try { socket.send(JSON.stringify({ type: "user", text, session_id: selectedId })); }
   catch { toast("发送失败，消息已保留，请稍后再试。"); return; }
-  sessions.get(selectedId).sending = true;
-  sessions.get(selectedId).draft = inputEl.value;
+  const session = sessions.get(selectedId);
+  if (text === "/memory" || text === "/forget") {
+    inputEl.value = session.draft = "";
+    resizeInput(); inputEl.focus();
+    return;
+  }
+  session.sending = true;
+  session.draft = inputEl.value;
   setPending(true); inputEl.focus();
 });
 

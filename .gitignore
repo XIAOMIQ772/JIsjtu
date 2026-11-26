@@ -18,6 +18,7 @@ __pycache__/
 !**/sessions/config.json
 **/sessions/*.json.tmp
 **/sessions/.reminders/
+**/sessions/.dreaming/
 
 # Local tools and macOS metadata
 .DS_Store

@@ -2,7 +2,7 @@ const MAX_REACT_STEPS: usize = 360;
 
 use async_openai::types::chat::{
     ChatCompletionMessageToolCall, ChatCompletionMessageToolCalls, ChatCompletionRequestAssistantMessageArgs,
-    ChatCompletionRequestMessage, ChatCompletionRequestToolMessageArgs,
+    ChatCompletionRequestMessage, ChatCompletionRequestSystemMessageContent, ChatCompletionRequestToolMessageArgs,
     ChatCompletionRequestUserMessageArgs, ChatCompletionTools, CreateChatCompletionRequestArgs,
 };
 use futures_util::StreamExt;
@@ -60,6 +60,7 @@ pub async fn chat_once(
     client: &async_openai::Client<async_openai::config::OpenAIConfig>,
     tx: &UnboundedSender<ChatEvent>,
     session_id: &str,
+    preferences: &[&str],
 ) -> anyhow::Result<()> {
     use tools_completion::outbound;
     outbound::SESSION.scope(session_id.to_owned(), async {
@@ -71,7 +72,7 @@ pub async fn chat_once(
             return Ok(());
         }
         let model = std::env::var("MODEL")?;
-        chat_with_tools(messages, prompt, client, &model, Some(tx), true)
+        chat_with_tools(messages, prompt, client, &model, Some(tx), true, preferences)
             .await
             .map(|_| ())
     }).await
@@ -85,7 +86,7 @@ pub(super) fn chat_subagent<'a>(
     model: &'a str,
 ) -> BoxFuture<'a, anyhow::Result<String>> {
     Box::pin(chat_with_tools(
-        messages, prompt, client, model, None, false,
+        messages, prompt, client, model, None, false, &[],
     ))
 }
 
@@ -96,6 +97,7 @@ async fn chat_with_tools(
     model: &str,
     tx: Option<&UnboundedSender<ChatEvent>>,
     allow_subagents: bool,
+    preferences: &[&str],
 ) -> anyhow::Result<String> {
     let mut tools = get_tools();
     if !allow_subagents {
@@ -110,12 +112,17 @@ async fn chat_with_tools(
             .build()?
             .into(),
     );
+    let preference_note = if preferences.is_empty() {
+        String::new()
+    } else {
+        format!("\n【答复偏好】仅在本次任务适用且用户未另行指定时参考。\n{}", preferences.join("\n"))
+    };
     // 每一轮就是一次“思考 → 行动 → 观察”，步数受 MAX_REACT_STEPS 限制。
     for _ in 0..MAX_REACT_STEPS {
         let request = CreateChatCompletionRequestArgs::default()
             .model(model)
             .tools(tools.clone())
-            .messages(messages.clone())
+            .messages(request_messages(messages, &preference_note))
             .build()?;
         let mut message = StreamedMessage::default();
         if let Err(error) = stream_message(request, client, tx, &mut message).await {
@@ -194,6 +201,20 @@ async fn chat_with_tools(
     }
 
     Err(anyhow::anyhow!("ReAct 超过最大步数"))
+}
+
+fn request_messages(
+    history: &[ChatCompletionRequestMessage],
+    preference_note: &str,
+) -> Vec<ChatCompletionRequestMessage> {
+    let mut messages = history.to_vec();
+    if !preference_note.is_empty()
+        && let Some(ChatCompletionRequestMessage::System(system)) = messages.first_mut()
+        && let ChatCompletionRequestSystemMessageContent::Text(text) = &mut system.content
+    {
+        text.push_str(preference_note);
+    }
+    messages
 }
 
 /// 可以和同一轮其他调用并发执行的工具：只读、无副作用、不打开可见窗口。

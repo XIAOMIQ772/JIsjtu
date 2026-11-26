@@ -451,6 +451,7 @@ async fn shared_chat_loop_preserves_parent_events_and_history() {
             "mock-model",
             Some(&tx),
             true,
+            &[],
         ),
     )
     .await
@@ -503,6 +504,7 @@ async fn answer_fragments_arrive_before_the_model_finishes() {
         "mock-model",
         Some(&tx),
         true,
+        &[],
     );
     let observe = async {
         assert!(
@@ -550,6 +552,7 @@ async fn interrupted_stream_keeps_partial_text_without_executing_tools() {
                 "mock-model",
                 Some(&tx),
                 true,
+                &[],
             ),
         )
         .await
@@ -578,7 +581,7 @@ async fn read_only_tool_batches_run_together_and_keep_call_order() {
     let mut messages = new_messages();
     let answer = tokio::time::timeout(
         Duration::from_secs(10),
-        chat_with_tools(&mut messages, "parallel-task", &mock.client, "mock-model", Some(&tx), true),
+        chat_with_tools(&mut messages, "parallel-task", &mock.client, "mock-model", Some(&tx), true, &[]),
     )
     .await
     .unwrap()

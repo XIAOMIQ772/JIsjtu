@@ -78,12 +78,14 @@ pub type SharedSession = Arc<Mutex<Session>>;
 
 pub struct Store {
     root: PathBuf,
+    pub dreaming: crate::dreaming::Dreaming,
     loaded: Mutex<HashMap<String, SharedSession>>,
 }
 
 impl Store {
     pub fn new(root: PathBuf) -> Self {
         Self {
+            dreaming: crate::dreaming::Dreaming::new(root.clone()),
             root,
             loaded: Mutex::new(HashMap::new()),
         }
@@ -151,6 +153,13 @@ impl Store {
         session.deleted = true;
         loaded.remove(id);
         let _ = session.tx.send(session.snapshot());
+        drop(session);
+        drop(loaded);
+        // Recall also checks that the source file exists, including after a crash
+        // between deleting the chat and removing its derived preferences.
+        if let Err(err) = self.dreaming.remove_source(id).await {
+            eprintln!("清理已删除会话的偏好记录失败：{err}");
+        }
         Ok(())
     }
 
@@ -216,6 +225,11 @@ impl Store {
         let mut guard = session.lock().await;
         anyhow::ensure!(!guard.deleted, "这个会话已删除，请切换会话后再发送");
         anyhow::ensure!(!guard.busy, "这个会话仍在处理上一条消息");
+        let at = chrono::Utc::now().timestamp_millis();
+        let turn = self.dreaming.begin(&prompt, at).await.unwrap_or_else(|err| {
+            eprintln!("读取跨会话偏好失败：{err}");
+            Default::default()
+        });
         guard.busy = true;
         if guard.record.events.is_empty() {
             guard.record.title = prompt.chars().take(28).collect();
@@ -229,7 +243,7 @@ impl Store {
                 .into(),
         );
         guard.emit(
-            json!({"type": "user", "text": prompt, "at": chrono::Utc::now().timestamp_millis()}),
+            json!({"type": "user", "text": prompt, "at": at}),
         );
         // Refresh the system prompt on resume so installed skills stay current.
         if let Some(first) = messages.first_mut() {
@@ -238,11 +252,13 @@ impl Store {
             }
         }
         self.persist(&mut guard);
+        let source_saved = guard.save_error.is_none();
         drop(guard);
         let store = self.clone();
         tokio::spawn(async move {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             // Run separately so even a tool panic releases the session's busy state.
+            let preferences = turn.preferences.clone();
             let task = tokio::spawn(async move {
                 let result = crate::llm::complete::chat_once(
                     &mut messages,
@@ -250,6 +266,7 @@ impl Store {
                     &async_openai::Client::new(),
                     &tx,
                     &session_id,
+                    &preferences,
                 )
                 .await;
                 (messages, result)
@@ -270,6 +287,10 @@ impl Store {
                             })
                             .expect("serializable error"),
                         );
+                    } else if source_saved
+                        && let Err(err) = store.dreaming.finish(guard.record.id.clone(), turn).await
+                    {
+                        eprintln!("保存跨会话偏好失败：{err}");
                     }
                 }
                 Err(err) => {
@@ -296,7 +317,7 @@ fn wrap(record: Record) -> SharedSession {
     }))
 }
 
-fn valid_id(id: &str) -> bool {
+pub(crate) fn valid_id(id: &str) -> bool {
     !id.is_empty()
         && !id.eq_ignore_ascii_case("config")
         && id.len() < 100

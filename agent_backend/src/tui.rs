@@ -52,6 +52,7 @@ enum SlashCommand {
     Resume,
     Help,
     Quit,
+    Memory(&'static str),
     /// 常用请求的快捷方式：把这句话当作用户消息发给小集
     Ask(&'static str),
 }
@@ -63,7 +64,7 @@ struct CommandSpec {
     description: &'static str,
 }
 
-const COMMANDS: [CommandSpec; 7] = [
+const COMMANDS: [CommandSpec; 9] = [
     CommandSpec {
         command: SlashCommand::Ask("帮我看看今天的安排：课程、作业截止、考试和新通知。"),
         name: "today",
@@ -93,6 +94,18 @@ const COMMANDS: [CommandSpec; 7] = [
         name: "resume",
         aliases: &["sessions"],
         description: "恢复或删除历史会话",
+    },
+    CommandSpec {
+        command: SlashCommand::Memory("/memory"),
+        name: "memory",
+        aliases: &[],
+        description: "查看已记住的偏好",
+    },
+    CommandSpec {
+        command: SlashCommand::Memory("/forget"),
+        name: "forget",
+        aliases: &[],
+        description: "清空已记住的偏好",
     },
     CommandSpec {
         command: SlashCommand::Help,
@@ -139,13 +152,14 @@ fn parse_command(input: &str) -> Option<Result<SlashCommand, String>> {
         return None;
     }
     let lower = name.to_ascii_lowercase();
-    Some(
-        COMMANDS
-            .iter()
-            .find(|spec| spec.name == lower || spec.aliases.contains(&lower.as_str()))
-            .map(|spec| spec.command)
-            .ok_or_else(|| name.to_string()),
-    )
+    let command = COMMANDS
+        .iter()
+        .find(|spec| spec.name == lower || spec.aliases.contains(&lower.as_str()))
+        .map(|spec| spec.command);
+    if let Some(SlashCommand::Memory(literal)) = command && input.trim() != literal {
+        return None;
+    }
+    Some(command.ok_or_else(|| name.to_string()))
 }
 
 #[derive(Debug)]
@@ -218,6 +232,8 @@ enum ServerMessage {
     },
     #[serde(rename = "session_deleted")]
     SessionDeleted { session_id: String },
+    #[serde(rename = "memory_status")]
+    MemoryStatus { session_id: String, text: String },
 }
 
 #[derive(Debug)]
@@ -375,6 +391,7 @@ struct App {
     saved_views: HashMap<String, SessionView>,
     list_request_id: u64,
     events: Vec<ChatEvent>,
+    memory_status: Option<String>,
     input: String,
     cursor: usize,
     scroll: u16,
@@ -417,6 +434,7 @@ impl App {
                     return None;
                 }
                 if !same_session && (self.session.is_some() || switch_confirmed) {
+                    self.memory_status = None;
                     self.restore_view(&session.id);
                 }
                 self.events.clear();
@@ -446,10 +464,12 @@ impl App {
                 if self.ready && session.revision <= current_revision {
                     return None;
                 }
-                if matches!(event, ChatEvent::User { .. }) && self.sending {
-                    self.input.clear();
-                    self.cursor = 0;
-                    self.sending = false;
+                if matches!(event, ChatEvent::User { .. }) {
+                    self.memory_status = None;
+                    if self.sending {
+                        self.clear_input();
+                        self.sending = false;
+                    }
                 }
                 self.append_event(event);
                 self.update_picker_session(&session);
@@ -487,6 +507,12 @@ impl App {
                 }
             }
             ServerMessage::SessionDeleted { session_id } => return self.remove_session(&session_id),
+            ServerMessage::MemoryStatus { session_id, text } => {
+                if self.is_current_session(&session_id) && self.pending_switch.is_none() {
+                    self.memory_status = Some(text);
+                    self.follow_tail = true;
+                }
+            }
         }
         None
     }
@@ -506,6 +532,7 @@ impl App {
             return None;
         }
         self.session = None;
+        self.memory_status = None;
         self.picker = None;
         self.events.clear();
         self.clear_input();
@@ -1132,7 +1159,10 @@ fn handle_command_popup_key(
         KeyCode::Down => {
             app.command_selection = (selected + 1) % matches.len();
         }
-        KeyCode::Tab => {
+        KeyCode::Tab | KeyCode::Enter
+            if key.code == KeyCode::Tab
+                || (matches[selected].command == SlashCommand::Memory("/forget")
+                    && app.input.trim() != "/forget") => {
             app.input = format!("/{}", matches[selected].name);
             app.cursor = app.input.chars().count();
             app.command_selection = 0;
@@ -1153,7 +1183,7 @@ fn run_command(
     http_requests: &HttpRequests,
 ) -> anyhow::Result<()> {
     match command {
-        SlashCommand::Ask(prompt) => {
+        SlashCommand::Ask(prompt) | SlashCommand::Memory(prompt) => {
             // 正忙时这句话留在输入框里，等空闲后按 Enter 再发
             app.input = prompt.to_string();
             app.cursor = app.input.chars().count();
@@ -1355,7 +1385,11 @@ fn submit(app: &mut App, outgoing: &mpsc::UnboundedSender<Message>) -> anyhow::R
     outgoing
         .send(Message::Text(payload.to_string().into()))
         .context("WebSocket 写入通道已关闭")?;
-    app.sending = true;
+    if matches!(app.input.trim(), "/memory" | "/forget") {
+        app.clear_input();
+    } else {
+        app.sending = true;
+    }
     app.status = app.default_status().into();
     Ok(())
 }
@@ -1711,7 +1745,14 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_history(frame: &mut Frame, app: &mut App, area: Rect) {
-    let rows = history_text(&app.events, area.width).lines;
+    let mut rows = history_text(&app.events, area.width).lines;
+    if let Some(text) = &app.memory_status {
+        if !rows.is_empty() {
+            rows.push(Line::default());
+        }
+        let notice = Text::styled(display_text(text), Style::default().fg(MUTED));
+        rows.extend(wrap_lines(notice.lines, area.width));
+    }
     if rows.is_empty() {
         return;
     }
@@ -2589,6 +2630,50 @@ mod tests {
         assert!(messages.try_recv().is_err());
         assert!(busy.input.contains("作业截止"));
         assert_eq!(command_matches("/bri")[0].name, "today");
+    }
+
+    #[test]
+    fn memory_commands_send_exact_text_and_display_only_the_current_sessions_reply() {
+        let mut app = ready_app(1, false);
+        let (outgoing, mut messages) = mpsc::unbounded_channel();
+        let (requests, _) = mpsc::unbounded_channel::<HttpRequest>();
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+
+        app.input = "/for".into();
+        handle_key(&mut app, enter, &outgoing, &requests).unwrap();
+        assert_eq!(app.input, "/forget");
+        assert!(messages.try_recv().is_err());
+
+        for command in ["/memory", "/forget"] {
+            app.input = command.into();
+            handle_key(&mut app, enter, &outgoing, &requests).unwrap();
+            let Message::Text(payload) = messages.try_recv().unwrap() else { panic!("应发送文本消息") };
+            assert_eq!(serde_json::from_str::<serde_json::Value>(&payload).unwrap(),
+                json!({"type": "user", "text": command, "session_id": "session-1"}));
+            assert!(app.input.is_empty() && !app.sending);
+        }
+        assert!(parse_command("/forget 这只是讨论命令").is_none());
+        let reply = |id: &str, text: &str| serde_json::from_value(json!({
+            "type": "memory_status", "session_id": id, "text": text
+        })).unwrap();
+        app.apply(reply("session-1", "中文\n简洁"));
+        app.apply(reply("other", "旧会话"));
+        assert_eq!(app.memory_status.as_deref(), Some("中文\n简洁"));
+        assert!(app.events.is_empty());
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(70, 20)).unwrap();
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let screen: String = terminal.backend().buffer().content.iter()
+            .map(|cell| cell.symbol().trim()).collect();
+        assert!(screen.contains("中文") && screen.contains("简洁"));
+
+        app.pending_switch = Some("other".into());
+        app.apply(ServerMessage::SessionSnapshot {
+            session: SessionSummary { id: "other".into(), ..Default::default() },
+            events: vec![],
+            save_error: None,
+        });
+        app.apply(reply("session-1", "迟到的结果"));
+        assert!(app.memory_status.is_none());
     }
 
     #[test]

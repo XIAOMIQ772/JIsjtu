@@ -1,4 +1,5 @@
 mod doctor;
+mod dreaming;
 mod llm;
 mod server;
 mod sessions;

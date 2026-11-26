@@ -227,6 +227,24 @@ async fn handle_socket(mut socket: WebSocket, store: Arc<Store>, id: Option<Stri
                 let requested_id = value["session_id"].as_str().unwrap_or(&selected_id);
                 let result = if requested_id != selected_id {
                     Err(anyhow::anyhow!("会话已切换，请重新发送"))
+                } else if matches!(prompt.as_str(), "/memory" | "/forget") {
+                    if session.lock().await.deleted {
+                        Err(anyhow::anyhow!("这个会话已删除，请先切换会话"))
+                    } else {
+                        let status = if prompt == "/forget" {
+                            store.dreaming.forget().await
+                        } else {
+                            store.dreaming.status().await
+                        };
+                        match status {
+                            Ok(text) => {
+                                let payload = serde_json::json!({"type":"memory_status", "session_id":selected_id, "text":text});
+                                if socket.send(Message::Text(payload.to_string().into())).await.is_err() { break; }
+                                Ok(())
+                            }
+                            Err(err) => Err(err),
+                        }
+                    }
                 } else { store.start(session.clone(), prompt).await };
                 if let Err(error) = result {
                     let _ = socket.send(Message::Text(serde_json::json!({"type":"request_error", "session_id":requested_id, "text":error.to_string()}).to_string().into())).await;
@@ -284,7 +302,7 @@ async fn handle_tcp(mut stream: TcpStream, addr: SocketAddr) {
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ChatEvent>();
         let mut streaming_answer = false;
-        let run = chat_once(&mut messages, &prompt, &client, &tx, &session_id);
+        let run = chat_once(&mut messages, &prompt, &client, &tx, &session_id, &[]);
         tokio::pin!(run);
 
         let outcome = loop {
