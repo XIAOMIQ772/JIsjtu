@@ -1,5 +1,11 @@
 //! 工具实现：每个工具一个子模块，这里只负责按名字分发和少量共用的辅助函数。
 
+#[cfg(target_os = "macos")]
+mod attendance_class;
+#[cfg(target_os = "macos")]
+mod attendance_source;
+#[cfg(target_os = "macos")]
+pub(crate) mod attendance_watch;
 mod bash;
 mod campus_time;
 mod canvas;
@@ -66,6 +72,7 @@ pub async fn call(name: &str, arguments: serde_json::Value) -> Result<String, St
         "search_files"=>search_files::search_files(arguments).await,
         "watch_eduinfo"=>watch_eduinfo::watch_eduinfo(arguments).await,
         "class_schedule"=>eduinfo::class_schedule(arguments).await,
+        "watch_attendance"=>watch_attendance(arguments).await,
         "exam_schedule"=>eduinfo::exam_schedule(arguments).await,
         "score_report"=>eduinfo::score_report(arguments).await,
         "export_calendar"=>export_calendar::export_calendar(arguments).await,
@@ -78,6 +85,20 @@ pub async fn call(name: &str, arguments: serde_json::Value) -> Result<String, St
         "homework"=>homework::homework(arguments).await,
         _ => Err("tool not found ,check tool name".to_string()),
     }
+}
+
+#[cfg(target_os = "macos")]
+async fn watch_attendance(arguments: serde_json::Value) -> Result<String, String> {
+    if !attendance_watch::is_running() {
+        return Err("请启动 JIsjtu，在终端聊天或网页对话里安排签到提醒。".into());
+    }
+    let class = attendance_class::resolve(&arguments).await?;
+    attendance_watch::schedule(class.course_id, &class.course_name, class.start)
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn watch_attendance(_: serde_json::Value) -> Result<String, String> {
+    Err("课堂签到监看需要在 macOS 版 JIsjtu 中运行。".into())
 }
 
 fn clip(text: &str) -> String {

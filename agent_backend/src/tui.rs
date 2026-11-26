@@ -1943,6 +1943,7 @@ fn tool_label(name: &str) -> Option<&'static str> {
         "homework" => "处理作业",
         "watch_eduinfo" => "访问教学信息网",
         "class_schedule" => "查看课表",
+        "watch_attendance" => "安排课堂签到提醒",
         "exam_schedule" => "查询考试安排",
         "score_report" => "查询成绩与绩点",
         "export_calendar" => "导出日历",

@@ -535,6 +535,26 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
     }),
     ChatCompletionTools::Function(ChatCompletionTool {
         function: (FunctionObject {
+            name: "watch_attendance".to_string(),
+            description: Some(
+                "用户要看或盯某一节课有没有发起签到时，为这一次课设置 macOS 通知。按北京时间，从课前 10 分钟到上课后 5 分钟，每 30 秒查看 Canvas 课程的课堂签到记录。发现符合时段的记录就通知。若用户只说「明早第一节」等时间，先用 class_schedule 查出课名和开始时间。课程或堂次有歧义时，根据候选向用户确认。".into(),
+            ),
+            parameters: Some(json!({
+                "type":"object",
+                "properties":{
+                    "course":{"type":["string","null"],"description":"课程名或课号。与 course_id 至少给出一项。"},
+                    "course_id":{"type":["integer","null"],"description":"Canvas 课程 ID。多个同名教学班时用已核实的 ID。"},
+                    "date":{"type":["string","null"],"description":"北京时间 YYYY-MM-DD、today 或 tomorrow。用户说本节、今天时填 today；下一次某课留 null，在课表中找最近尚能监看的堂次。"},
+                    "start_time":{"type":["string","null"],"description":"北京时间 HH:MM。只有用户明确给出或已从课表核实才填写，否则用 null。"}
+                },
+                "required":["course","course_id","date","start_time"],
+                "additionalProperties":false
+            })),
+            strict: Some(true),
+        }),
+    }),
+    ChatCompletionTools::Function(ChatCompletionTool {
+        function: (FunctionObject {
             name: "class_schedule".to_string(),
             description: Some(
                 "从教学信息服务网（教务系统）读取本人课表，按交大校历的教学周和单双周过滤，给出节次对应时间、教室和老师。\

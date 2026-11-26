@@ -47,7 +47,7 @@ JIsjtu
 | `OPENAI_BASE_URL` | OpenAI 兼容服务的接口地址； |
 | `OPENAI_API_KEY` | 模型服务密钥 |
 | `MODEL` | 模型名称 |
-| `CANVAS_API_TOKEN` | 在 Canvas 的「账户 → 设置」创建访问令牌，用于课程、作业、课件查询 |
+| `CANVAS_API_TOKEN` | 在 Canvas 的「账户 → 设置」创建访问令牌，用于课程、作业、课件和课堂签到记录查询 |
 | `EMAIL_USER_ACCOUNT` / `EMAIL_USER_PASSWORD` | jAccount 账号或交大邮箱地址，以及 jAccount 登录密码 |
 | `IMAP_PASSWORD` | 可选，独立的邮箱密码或客户端授权码；留空时沿用 `EMAIL_USER_PASSWORD` |
 | `IMAP_HOST` / `IMAP_PORT` | 邮箱服务器；学校邮箱可设置 `imap.sjtu.edu.cn`、`993` |
@@ -83,6 +83,9 @@ JIsjtu
 | 找课件、下载整门课 | `search_files` 跨课程搜索，`course_files` 的 `download_all` 下载指定课程中可访问的全部文件，默认目录为 `~/Downloads/Canvas-<课程id>`。文件名带 Canvas ID，重跑会跳过已有且大小匹配的文件 | Canvas |
 | 读课件、文档 | `pdf_analysis` 读取 PDF，在 macOS 上自动用 Vision 离线识别扫描页。`read_office` 读取 pptx（含讲者备注）、docx（含表格）和 xlsx | 本地文件 |
 | 上课、作业主动提醒 | 程序运行期间，macOS 在上课前 10 分钟、未完成作业截止前 1 小时发送通知。课表需要已登录的教务会话，作业需要 Canvas 令牌 | 教务系统、Canvas |
+| 盯一节课的签到 | 对小集说“帮我盯明早 8 点的大学物理有没有发起签到”。`watch_attendance` 为这一节课安排监看，在 Canvas「点名签到」里发现时段内的新记录就发 macOS 通知 | Canvas 课堂签到 |
+
+例如 08:00 开始的课，签到监看在北京时间 07:50 至 08:05 每 30 秒刷新一次。中途提出请求会从当前时刻开始。监看期间请保持 Mac 唤醒并运行 JIsjtu。每条新记录提醒一次，有本人签到状态时一并显示。监看期间如始终无法读取记录，结束时会收到失败提醒。程序重启后会恢复尚未过期的任务。
 | 导入手机日历 | `export_calendar`：课表按周展开、考试、未交作业截止导出为 .ics，带提醒 | 教务系统、Canvas |
 
 所有时间按北京时间输出。内置 2026–2027 秋季学期从 9 月 14 日开始，共 18 周，第 17–18 周为考试周。第 1 节课 08:00 开始，每节 45 分钟。截至 2026 年 11 月 26 日，教务处校历目录仅列出该学年的秋季学期。春季校历公布后，可按官方日期在 `.env` 填写 `SJTU_TERM_START` 和 `SJTU_TERM_WEEKS`。[教务处历年校历](https://jwc.sjtu.edu.cn/jxxl/lnxl.htm)

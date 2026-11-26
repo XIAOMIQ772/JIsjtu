@@ -145,7 +145,10 @@ async fn main() {
     let tcp_task = tokio::spawn(serve_tcp(tcp_listener));
 
     #[cfg(target_os = "macos")]
-    llm::complete::tools_completion::reminders::start();
+    {
+        llm::complete::tools_completion::attendance_watch::start();
+        llm::complete::tools_completion::reminders::start();
+    }
 
     if tui_mode {
         let result = tui::run(http_addr).await;

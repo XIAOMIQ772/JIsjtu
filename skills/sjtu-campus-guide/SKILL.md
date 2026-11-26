@@ -30,6 +30,7 @@ description: 交大校园常识速查：常用系统入口与用途、校历与�
 
 - 今天/最近有什么安排：daily_brief
 - 课表、下节课在哪：class_schedule（day=today/tomorrow/this_week/next_week/all）
+- 用户要盯某一次课的课堂签到时调用 watch_attendance。用课程和上课时间定位本次监看；有多个匹配班次时，把候选交给用户选择。回复安排好的具体时间，只有签到页明确给出本人状态时才说明本人是否已签到。
 - 考试时间与考场：exam_schedule
 - 期末成绩和绩点估算用 score_report。用户问官方 GPA、学积分或排名时用 score_report 的 view=official，给出本人查询入口与学院证明办理方式。
 - 离毕业还差多少学分、哪类课还没修够：degree_progress
