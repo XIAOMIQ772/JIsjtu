@@ -9,6 +9,8 @@ use std::io::Read;
 use super::clip;
 use super::text::decode_entity;
 
+mod word_math;
+
 /// 单个条目解压后的上限，防止压缩炸弹。
 const MAX_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
 const OUTLINE_SLIDES: usize = 30;
@@ -217,8 +219,12 @@ pub(super) fn drawing_text(xml: &str) -> String {
 pub(super) fn word_text(xml: &str) -> String {
     let mut out = String::new();
     let mut in_text = false;
-    for token in tokens(xml) {
+    let mut tokens = tokens(xml).into_iter();
+    while let Some(token) = tokens.next() {
         match token {
+            Token::Open { name: "m:oMath", empty: false, .. } => {
+                out.push_str(&word_math::equation(&mut tokens));
+            }
             Token::Open { name: "w:t", empty: false, .. } => in_text = true,
             Token::Close("w:t") => in_text = false,
             Token::Open { name: "w:tab", .. } => out.push('\t'),

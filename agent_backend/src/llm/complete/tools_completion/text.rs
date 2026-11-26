@@ -51,20 +51,33 @@ pub(super) fn html_to_text(html: &str) -> String {
             continue;
         }
 
-        let Some(end) = rest.find('>') else {
-            break;
-        };
-        let tag = rest[1..end].trim().to_lowercase();
-        rest = &rest[end + 1..];
+        let after = &rest[1..];
+        if !after.trim_start_matches('/').starts_with(|c: char| c.is_ascii_alphabetic() || matches!(c, '!' | '?')) {
+            out.push('<');
+            rest = after;
+            continue;
+        }
+        let mut quoted = None;
+        let end = after.char_indices().find_map(|(index, ch)| match (quoted, ch) {
+            (None, '>') => Some(index),
+            (None, '"' | '\'') => { quoted = Some(ch); None }
+            (Some(q), _) if q == ch => { quoted = None; None }
+            _ => None,
+        });
+        let Some(end) = end else { out.push_str(rest); rest = ""; break };
+        let tag = after[..end].trim();
+        let attrs = tag.split_once(char::is_whitespace).map_or("", |(_, attrs)| attrs);
+        rest = &after[end + 1..];
         let closing = tag.starts_with('/');
         let name: String = tag
             .trim_start_matches('/')
             .chars()
             .take_while(|c| c.is_ascii_alphanumeric())
-            .collect();
+            .collect::<String>().to_ascii_lowercase();
 
         match (name.as_str(), closing) {
-            ("ol", false) => lists.push(Some(0)),
+            ("ol", false) => lists.push(Some(super::office::attr(attrs, "start")
+                .and_then(|v| v.parse::<u32>().ok()).unwrap_or(1).saturating_sub(1))),
             ("ul", false) => lists.push(None),
             ("ol" | "ul", true) => {
                 lists.pop();
@@ -74,7 +87,8 @@ pub(super) fn html_to_text(html: &str) -> String {
                 out.push('\n');
                 match lists.last_mut() {
                     Some(Some(counter)) => {
-                        *counter += 1;
+                        *counter = super::office::attr(attrs, "value").and_then(|v| v.parse().ok())
+                            .unwrap_or_else(|| counter.saturating_add(1));
                         out.push_str(&format!("{counter}. "));
                     }
                     _ => out.push_str("- "),
@@ -85,7 +99,19 @@ pub(super) fn html_to_text(html: &str) -> String {
                 out.push('\n')
             }
             ("td" | "th", true) => out.push('\t'),
-            ("img", _) => out.push_str("[图片]"),
+            ("img", false) => {
+                let attr = |key| super::office::attr(attrs, key).filter(|s| !s.trim().is_empty());
+                if let Some(equation) = attr("data-equation-content") {
+                    out.push_str(&equation);
+                } else if let Some(alt) = attr("alt") {
+                    out.push_str(&format!("[图片：{alt}]"));
+                } else {
+                    out.push_str("[图片]");
+                }
+            }
+            ("sup", false) => out.push_str("^("),
+            ("sub", false) => out.push_str("_("),
+            ("sup" | "sub", true) => out.push(')'),
             _ => {}
         }
     }
