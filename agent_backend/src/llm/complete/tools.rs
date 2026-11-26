@@ -462,9 +462,9 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
         function: (FunctionObject {
             name: "homework".to_string(),
             description: Some(
-                "帮用户写作业并提交到 Canvas。action=questions：从作业来源中准确切分题目，返回每道题的编号、页码、分值、小问和完整题干；\
-                 来源三选一：path=本地 PDF、Word（docx）、PowerPoint（pptx）或文本文件，text=作业只是一段文字时直接传入，course_id+assignment_id=Canvas 作业（自动读取说明并下载其中的 PDF/Word/PowerPoint 附件）。\
-                 题目较多时先返回目录，再用 question 传序号读取单题；长题或目录用 part 续读。写作业时先用它拿到题目再逐题作答。\
+                "从 Canvas（course_id + assignment_id）、本地 PDF/Word/PowerPoint/文本（path）或文字（text）读取作业。\
+                 questions 返回候选题号、页码、小问、共同说明和附件位置。按老师指定范围作答，长目录、长题或说明用 part 续读，单题用 question 指定。\
+                 requirements 读取 Canvas 完整网页说明、评分细则和提交方式。按说明核对每个必做题、评分点和最终文件。\
                  action=submit：text 为在线文本提交，files 为上传本地文件提交，二者只能选一。\
                  用户已经明确说可以提交（如“写完直接交”“提交吧”）时，传 confirm=true 直接提交；\
                  用户没有明确说要提交时，传 confirm=false 生成预览，系统会把预览直接展示给用户，\
@@ -475,8 +475,8 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
                 "properties":{
                     "action":{
                         "type":"string",
-                        "enum":["questions","submit"],
-                        "description":"questions=识别题目；submit=提交作业"
+                        "enum":["questions","requirements","submit"],
+                        "description":"questions 读题，requirements 读 Canvas 全部说明和评分细则，submit 预览或提交"
                     },
                     "path":{
                         "type":"string",
@@ -500,7 +500,7 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
                     },
                     "part":{
                         "type":"integer","minimum":1,
-                        "description":"questions 返回多段时，保持其他参数相同，传目标段号（默认 1）"
+                        "description":"questions 或 requirements 返回多段时，保持其他参数相同，传目标段号（默认 1）"
                     },
                     "files":{
                         "type":"array",

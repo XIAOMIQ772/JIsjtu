@@ -3,6 +3,7 @@ use std::sync::{LazyLock, Mutex, OnceLock};
 
 use regex::Regex;
 
+use super::canvas::CANVAS_BASE;
 use super::course_files::{CanvasFile, download_file};
 use super::office::document_pages;
 use super::pdf_analysis::load_pdf_pages;
@@ -10,11 +11,11 @@ use super::text::html_to_text;
 use super::MAX_OUTPUT_CHARS;
 
 mod questions;
-#[cfg(test)]
+mod requirements;
 use questions::QuestionStyle;
-use questions::{part_number, render_questions, split_question_sources, split_questions};
+use questions::{homework_page, part_number, render_questions, split_question_sources, split_questions};
+use requirements::RubricCriterion;
 
-const HOMEWORK_PREAMBLE_CHARS: usize = 800;
 static HW_FILE_LINK: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"/(?:courses/\d+/)?files/(\d+)").unwrap());
 
@@ -61,6 +62,10 @@ struct HomeworkAssignment {
     lock_explanation: Option<String>,
     #[serde(default)]
     html_url: Option<String>,
+    #[serde(default)]
+    rubric: Option<Vec<RubricCriterion>>,
+    #[serde(default)]
+    use_rubric_for_grading: Option<bool>,
 }
 
 impl HomeworkAssignment {
@@ -104,7 +109,7 @@ async fn fetch_homework_assignment(
     assignment_id: &str,
 ) -> Result<HomeworkAssignment, String> {
     let response = client
-        .get(format!("https://oc.sjtu.edu.cn/api/v1/courses/{course_id}/assignments/{assignment_id}"))
+        .get(format!("{CANVAS_BASE}/api/v1/courses/{course_id}/assignments/{assignment_id}"))
         .bearer_auth(token)
         .send()
         .await
@@ -132,7 +137,6 @@ fn homework_arg<'a>(arguments: &'a serde_json::Value, key: &str) -> Option<&'a s
 async fn download_homework_attachments(
     client: &reqwest::Client,
     token: &str,
-    assignment_id: &str,
     html: &str,
 ) -> (Vec<(PathBuf, bool)>, Vec<String>) {
     let mut ids: Vec<&str> = Vec::new();
@@ -143,12 +147,12 @@ async fn download_homework_attachments(
         }
     }
 
-    let dir = std::env::temp_dir().join("jisjtu-homework").join(assignment_id);
+    let dir = std::env::temp_dir().join("jisjtu-homework");
     let mut saved = Vec::new();
     let mut failures = Vec::new();
     for id in ids {
         let file = match client
-            .get(format!("https://oc.sjtu.edu.cn/api/v1/files/{id}"))
+            .get(format!("{CANVAS_BASE}/api/v1/files/{id}"))
             .bearer_auth(token)
             .send()
             .await
@@ -166,7 +170,8 @@ async fn download_homework_attachments(
                 continue;
             }
         };
-        let target = dir.join(file.local_name());
+        // Different Canvas attachments may intentionally have identical display names.
+        let target = dir.join(format!("file-{id}")).join(file.local_name());
         match download_file(client, token, &file, &target).await {
             Ok(_) => {
                 let is_pdf = file.content_type.as_deref().is_some_and(|kind| kind.contains("pdf"))
@@ -183,7 +188,7 @@ async fn homework_questions(arguments: &serde_json::Value) -> Result<String, Str
     let only = homework_arg(arguments, "question");
     let part = part_number(arguments)?;
 
-    if let Some(text) = homework_arg(arguments, "text") {
+    if let Some(text) = arguments["text"].as_str().filter(|t| !t.trim().is_empty()) {
         let parsed = split_questions(&[text.to_string()]);
         return render_questions("来源：用户提供的作业文字\n", &parsed, only, part);
     }
@@ -214,64 +219,65 @@ async fn homework_questions(arguments: &serde_json::Value) -> Result<String, Str
     let token = canvas_token()?;
     let client = reqwest::Client::new();
     let assignment = fetch_homework_assignment(&client, &token, course_id, assignment_id).await?;
-    let html = assignment.description.clone().unwrap_or_default();
-    let description = html_to_text(&html);
+    let html = assignment.description.as_deref().unwrap_or_default();
+    let description = html_to_text(html);
     let (attachments, failures) =
-        download_homework_attachments(&client, &token, assignment_id, &html).await;
+        download_homework_attachments(&client, &token, html).await;
 
     let mut header = assignment.summary();
-    for (path, _) in &attachments {
-        header.push_str(&format!("附件已下载：{}\n", path.display()));
-    }
     for failure in &failures {
         header.push_str(&format!("{failure}\n"));
     }
 
     let mut sources = Vec::new();
-    let mut page_count = 0;
     for (path, is_pdf) in &attachments {
-        // PDF 按页读取；Word 整篇、PowerPoint 每页一段；其他附件留给对应工具
         let loaded: Result<Vec<String>, String> = if *is_pdf {
             load_pdf_pages(&path.to_string_lossy()).await.map(|pages| pages.as_ref().clone())
+        } else if let Some(result) = document_pages(path) {
+            result
+        } else if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("txt") || ext.eq_ignore_ascii_case("md")) {
+            tokio::fs::read_to_string(path).await.map(|text| vec![text]).map_err(|err| err.to_string())
         } else {
-            match document_pages(path) {
-                Some(result) => result,
-                None => continue,
-            }
+            header.push_str(&format!("其他附件（按作业要求单独读取）：{}\n", path.display()));
+            continue;
         };
         match loaded {
-            Ok(loaded) => {
-                header.push_str(&format!(
-                    "{} 对应第 {}–{} 页\n",
-                    path.display(),
-                    page_count + 1,
-                    page_count + loaded.len()
-                ));
-                page_count += loaded.len();
-                if !loaded.is_empty() {
-                    sources.push(loaded);
-                }
-            }
+            Ok(pages) if pages.iter().any(|page| !page.trim().is_empty()) => sources.push((path, pages)),
+            Ok(_) => header.push_str(&format!("{} 没有可提取的文字，请核对原件。\n", path.display())),
             Err(err) => header.push_str(&format!("{} 无法提取文字：{err}\n", path.display())),
         }
     }
 
+    let web = split_questions(std::slice::from_ref(&description));
+    let web_is_source = !description.is_empty() && (sources.is_empty() || web.style != QuestionStyle::Whole);
+    // With attachments the webpage can contain both questions and shared submission instructions.
+    let instructions = assignment.requirements(if sources.is_empty() { "" } else { &description });
+    if instructions.len() <= 4_000 {
+        header.push_str(&instructions);
+    } else {
+        header.push_str("作业说明或评分细则较长。作答前请用 action=requirements 读取全部要求，按返回的 part 续读。\n");
+    }
     if sources.is_empty() {
         if description.is_empty() {
-            return Ok(format!(
-                "{header}\n作业说明为空，也没有可读取的附件（PDF、Word、PowerPoint）。其他附件请用对应工具读取。"
-            ));
+            return homework_page(&format!("{header}\n作业说明为空，也没有可读取的题面。请核对上面的附件。"), part);
         }
-        header.push_str("题目来源：作业说明文字\n");
-        return render_questions(&header, &split_questions(&[description]), only, part);
+        header.push_str("题目来源：Canvas 作业说明\n");
+        return render_questions(&header, &web, only, part);
     }
-
-    if !description.is_empty() {
-        let description: String = description.chars().take(HOMEWORK_PREAMBLE_CHARS).collect();
-        header.push_str(&format!("\n[作业说明]\n{description}\n"));
+    header.push_str("题目来源与页码（按老师指定的范围作答）：\n");
+    let mut documents = Vec::new();
+    let mut next_page = 1;
+    if web_is_source {
+        header.push_str("Canvas 网页说明对应第 1 页，完整说明可用 action=requirements 读取。\n");
+        documents.push(vec![description]);
+        next_page += 1;
     }
-    header.push_str("题目来源：附件\n");
-    render_questions(&header, &split_question_sources(&sources), only, part)
+    for (path, pages) in sources {
+        header.push_str(&format!("{} 对应第 {}–{} 页\n", path.display(), next_page, next_page + pages.len() - 1));
+        next_page += pages.len();
+        documents.push(pages);
+    }
+    render_questions(&header, &split_question_sources(&documents), only, part)
 }
 
 async fn upload_submission_file(
@@ -646,8 +652,9 @@ async fn submit_homework(arguments: &serde_json::Value) -> Result<String, String
 pub(super) async fn homework(arguments: serde_json::Value) -> Result<String, String> {
     match arguments["action"].as_str().unwrap_or("questions").trim() {
         "questions" => homework_questions(&arguments).await,
+        "requirements" => requirements::read(&arguments).await,
         "submit" => submit_homework(&arguments).await,
-        other => Err(format!("未知的 action「{other}」，只支持 questions / submit")),
+        other => Err(format!("未知的 action「{other}」，只支持 questions / requirements / submit")),
     }
 }
 
