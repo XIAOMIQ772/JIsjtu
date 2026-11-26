@@ -109,7 +109,7 @@ impl Source {
     }
 }
 
-async fn notify_once(receipt: &Path, title: &str, body: &str) -> bool {
+pub(super) async fn notify_once(receipt: &Path, title: &str, body: &str) -> bool {
     // Reserve before delivery so two instances using the same profile cannot both notify.
     let reserved = match fs::OpenOptions::new()
         .write(true)

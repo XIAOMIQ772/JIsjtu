@@ -26,7 +26,7 @@ pub(super) struct Event {
 }
 
 /// FNV-1a：UID 需要在多次导出间保持稳定，重复导入时日历会更新而不是重复添加。
-fn stable_hash(text: &str) -> u64 {
+pub(super) fn stable_hash(text: &str) -> u64 {
     text.bytes()
         .fold(0xcbf29ce484222325u64, |hash, byte| (hash ^ byte as u64).wrapping_mul(0x100000001b3))
 }
