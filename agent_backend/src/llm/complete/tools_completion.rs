@@ -10,6 +10,7 @@ mod bash;
 mod campus_time;
 mod canvas;
 mod course_files;
+mod course_reviews;
 mod create_subagents;
 mod daily_brief;
 mod degree_progress;
@@ -70,6 +71,7 @@ pub async fn call(name: &str, arguments: serde_json::Value) -> Result<String, St
         "pdf_analysis"=>pdf_analysis::pdf_analysis(arguments).await,
         "read_office"=>office::read_office(arguments).await,
         "course_files"=>course_files::course_files(arguments).await,
+        "course_reviews"=>course_reviews::course_reviews(arguments).await,
         "search_files"=>search_files::search_files(arguments).await,
         "watch_eduinfo"=>watch_eduinfo::watch_eduinfo(arguments).await,
         "class_schedule"=>eduinfo::class_schedule(arguments).await,

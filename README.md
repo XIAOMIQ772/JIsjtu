@@ -49,6 +49,7 @@ JIsjtu
 | `MODEL` | 模型名称 |
 | `CANVAS_API_TOKEN` | 在 Canvas 的「账户 → 设置」创建访问令牌，用于课程、作业、课件和课堂签到记录查询 |
 | `EMAIL_USER_ACCOUNT` / `EMAIL_USER_PASSWORD` | jAccount 账号或交大邮箱地址，以及 jAccount 登录密码 |
+| `JCOURSE_EMAIL` / `JCOURSE_PASSWORD` | 查选课评价时填写选课社区账号（邮箱前缀或完整的 `@sjtu.edu.cn` 邮箱）和独立的社区密码 |
 | `IMAP_PASSWORD` | 可选，独立的邮箱密码或客户端授权码；留空时沿用 `EMAIL_USER_PASSWORD` |
 | `IMAP_HOST` / `IMAP_PORT` | 邮箱服务器；学校邮箱可设置 `imap.sjtu.edu.cn`、`993` |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_PASSWORD` | 发信默认使用 `mail.sjtu.edu.cn:465`（TLS）。未单设密码时依次使用 `IMAP_PASSWORD`、`EMAIL_USER_PASSWORD` |
@@ -78,6 +79,7 @@ JIsjtu
 | 平时成绩与评语 | `get_grades`：逐项得分、班级均分/最高/最低、权重、老师评语 | Canvas |
 | 找空教室 | `find_classroom`：按教学周算空闲节次，附教室实时人数；也能查某间教室当天课表 | 教室信息服务（公开） |
 | 图书馆人多吗 | `library_status`：各馆在馆人数与占比 | 图书馆人数统计（公开） |
+| 选哪位老师、平时点名吗 | `course_reviews` 按课程比较授课教师，按教师分课程汇总评分、点评条数和学生反馈。支持查签到、给分、工作量和避雷，附反馈学期及原文链接 | [交大选课社区](https://course.sjtu.plus/) |
 | 水源 | `get_hotnews` 热帖简报、`shuiyuan_search` 搜索、`shuiyuan_topic` 读帖子、`shuiyuan_post` 查看版块、发表主题或回帖 | 水源社区 |
 | 邮件 | `mail_fetch` 列出、阅读、搜索、下载附件，`send_email` 发送纯文本邮件 | 学校邮箱 |
 | 找课件、下载整门课 | `search_files` 跨课程搜索，`course_files` 的 `download_all` 下载指定课程中可访问的全部文件，默认目录为 `~/Downloads/Canvas-<课程id>`。文件名带 Canvas ID，重跑会跳过已有且大小匹配的文件 | Canvas |
@@ -191,7 +193,7 @@ description: 校园卡余额与消费记录查询流程
 | 技能 | 用途 |
 | --- | --- |
 | `sjtu-campus-guide` | 交大常用系统入口、该用哪个工具、校历与节次作息、GPA 4.3 制与目标绩点反推 |
-| `course-selection-research` | 选课调研：水源多关键词检索、精读帖子、核对课表冲突，给出有出处的对比 |
+| `course-selection-research` | 按学生关注点比较课程和教师，引用选课社区的评分与分学期点评，按需补充水源讨论或核对课表冲突 |
 | `exam-review-plan` | 按真实考试时间与剩余作业倒排复习计划，整理薄弱科目课件重点 |
 | `weekly-study-plan` | 结合课表空档、DDL 与考试排一周学习计划，并推荐自习地点 |
 | `email-to-teacher` | 起草请假、延期、成绩疑问等邮件，在用户确认后代发 |

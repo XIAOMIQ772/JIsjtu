@@ -214,6 +214,7 @@ const PARALLEL_SAFE: &[&str] = &[
     "exam_schedule",
     "score_report",
     "get_hotnews",
+    "course_reviews",
     "shuiyuan_search",
     "shuiyuan_topic",
     "pdf_analysis",

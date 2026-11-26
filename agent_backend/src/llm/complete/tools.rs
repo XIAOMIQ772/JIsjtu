@@ -285,10 +285,29 @@ pub fn get_tools() -> Vec<ChatCompletionTools> {
     }),
     ChatCompletionTools::Function(ChatCompletionTool {
         function: (FunctionObject {
+            name: "course_reviews".to_string(),
+            description: Some("查交大选课社区的授课评分、点评数量和学生原文。问某门课选哪位老师、给分、点名、避雷或某位老师口碑时首选。按课程比较教师或按教师分课程查看，结果有多页时可翻页。同名教师先按学院或 ID 区分。".into()),
+            parameters: Some(json!({
+                "type":"object",
+                "properties":{
+                    "course":{"type":"string","description":"课程名或课号，可与教师条件合用"},
+                    "teacher":{"type":"string","description":"教师姓名，可单独查询"},
+                    "course_id":{"type":"integer","minimum":1,"description":"选课社区授课条目 ID，来自该站课程链接"},
+                    "teacher_id":{"type":"integer","minimum":1,"description":"选课社区教师 ID，用于指定同名教师"},
+                    "focus":{"type":"string","description":"overall 综合推荐（默认），attendance 签到点名，risks 避雷，grading 给分，workload 工作量，teaching 授课，也可以使用简短关键词"},
+                    "page":{"type":"integer","minimum":1,"description":"从 1 开始，按返回说明翻页"}
+                },
+                "additionalProperties":false
+            })),
+            strict: Some(false),
+        }),
+    }),
+    ChatCompletionTools::Function(ChatCompletionTool {
+        function: (FunctionObject {
             name: "shuiyuan_search".to_string(),
             description: Some(
                 "在水源社区搜索帖子，返回相关帖子（标题、链接、楼数、点赞、时间）及命中楼层摘要。\
-                 适合查选课评价、老师口碑、给分情况、考试经验、校园生活问题（如“高数 选课”“某老师 给分”“保研 经验”）。\
+                 适合查考试经验、校园生活问题和水源讨论，也可补充选课社区 course_reviews 中缺少的经验。\
                  支持 Discourse 搜索语法：order:latest 按时间排序、in:title 只搜标题、after:2025-01-01 限定时间。\
                  要读完整讨论用 shuiyuan_topic。".to_string(),
             ),

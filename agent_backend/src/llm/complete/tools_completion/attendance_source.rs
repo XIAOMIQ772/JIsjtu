@@ -121,6 +121,8 @@ impl StudentSession {
         for key in [
             "OPENAI_API_KEY",
             "CANVAS_API_TOKEN",
+            "JCOURSE_EMAIL",
+            "JCOURSE_PASSWORD",
             "EMAIL_USER_ACCOUNT",
             "EMAIL_USER_PASSWORD",
             "IMAP_PASSWORD",

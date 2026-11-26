@@ -14,7 +14,8 @@ description: 交大校园常识速查：常用系统入口与用途、校历与�
 - 教务处（教务通知、校历、学籍与选课政策）：https://jwc.sjtu.edu.cn
   - 通知通告：https://jwc.sjtu.edu.cn/xwtg/tztg.htm
   - 本年校历：https://jwc.sjtu.edu.cn/jxxl/bnxlst.htm
-- 水源社区（同学交流、选课评价、二手、失物招领）：https://shuiyuan.sjtu.edu.cn
+- 交大选课社区提供课程评分、教师授课记录和学生点评。https://course.sjtu.plus/
+- 水源社区（同学交流、校园经验、二手、失物招领）：https://shuiyuan.sjtu.edu.cn
 - 交大邮箱：https://mail.sjtu.edu.cn
 - 图书馆：https://www.lib.sjtu.edu.cn（注意要带 www）
 - 我的交大 / 一网通办（各类办事流程、证明开具）：https://my.sjtu.edu.cn
@@ -41,7 +42,7 @@ description: 交大校园常识速查：常用系统入口与用途、校历与�
 - 把课表、考试、作业截止导入手机日历：export_calendar
 - 读题、写作业和交作业用 homework。查题或讲题时用 questions 按需取题，requirements 可查老师的完整要求。按指定题目和格式交付。准备提交时，用 required_questions 核对要求标出的题号，用 required_files 核对必须单独上传的文件。
 - 找自习教室：find_classroom；图书馆人多不多：library_status
-- 选课评价、老师口碑、校园经验：shuiyuan_search，再用 shuiyuan_topic 读帖子
+- 选课评价、老师口碑、给分和点名习惯用 course_reviews。查校园经验或补充水源讨论时，用 shuiyuan_search 找帖，再用 shuiyuan_topic 阅读。
 - 学校邮件：mail_fetch（search 找邮件，attachment 下载附件）
 - 今天是第几周、现在第几节：get_time_stamp
 

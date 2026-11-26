@@ -41,6 +41,8 @@ AGENT_SSO_PYTHON=./.venv/bin/python
 
 `EMAIL_USER_ACCOUNT` 填 jAccount 账号或交大邮箱，`EMAIL_USER_PASSWORD` 填 jAccount 登录密码；邮箱客户端授权码单独填 `IMAP_PASSWORD`。
 
+要查选课评价，请在安装目录的 `.env` 中单独填写 `JCOURSE_EMAIL`（账号前缀或完整交大邮箱）和 `JCOURSE_PASSWORD`（选课社区密码）。重开后可以直接问“数据结构哪位老师作业少？”或“这位老师往年会点名吗？”
+
 程序默认在后台登录和查询网页，任务结束后回收临时浏览器，保存的登录状态仍可复用。`AGENT_SSO_AUTO_LOGIN=0` 可跳过启动登录，`AGENT_SSO_HEADLESS=0` 可显示登录过程供手动验证或调试。
 
 ## 使用

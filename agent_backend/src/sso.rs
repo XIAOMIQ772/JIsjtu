@@ -126,6 +126,8 @@ async fn run_helper(
         "EMAIL_USER_PASSWORD",
         "OPENAI_API_KEY",
         "CANVAS_API_TOKEN",
+        "JCOURSE_EMAIL",
+        "JCOURSE_PASSWORD",
         "IMAP_PASSWORD",
         "SMTP_PASSWORD",
     ] {
