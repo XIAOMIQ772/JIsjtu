@@ -8,13 +8,21 @@
 
 ## 快速开始
 
-仓库中的 [JIsjtu.zip](JIsjtu.zip) 适用于 **Apple Silicon Mac（M 系列）**。解压后双击 `Install.command`，安装器会把程序装到 `~/.local/share/JIsjtu`，并在 `~/.local/bin` 注册 `JIsjtu` 命令。也可在解压目录的终端运行 `sh install.sh`。
+### Windows 10 / 11 x64（Intel、AMD）
 
-首次双击安装成功后，安装器会尝试用「文本编辑」打开个人配置文件。也可以随时在终端运行下面的命令打开它。
+下载 [JIsjtu-Windows-x64.zip](JIsjtu-Windows-x64.zip)，右键选择「全部提取」，打开解压目录并双击 **Install.cmd**。程序装在当前用户的 `%LOCALAPPDATA%\JIsjtu`。首次安装会打开记事本，填写下方的三个模型配置项并保存。从开始菜单打开 **JIsjtu** 进入终端界面，或打开 **JIsjtu 网页版**。开始菜单里的 **JIsjtu 配置** 可随时编辑配置。[Windows 随包指南](agent_backend/packaging/windows/README.md)
+
+### Apple Silicon Mac（M 系列）
+
+下载 [JIsjtu.zip](JIsjtu.zip)。解压后双击 `Install.command`，安装器会把程序装到 `~/.local/share/JIsjtu`，并在 `~/.local/bin` 注册 `JIsjtu` 命令。也可在解压目录的终端运行 `sh install.sh`。
+
+Mac 安装器会在首次安装后尝试用「文本编辑」打开个人配置文件。也可以随时在终端运行下面的命令打开它。
 
 ```sh
 open -e ~/.local/share/JIsjtu/.env
 ```
+
+### 首次对话
 
 对话需要填写 `OPENAI_BASE_URL`、`OPENAI_API_KEY` 和 `MODEL`。模型服务需支持流式 Chat Completions 和工具调用。校园账号按要用的功能填写，保存后新开一个终端启动助手。
 
@@ -24,7 +32,7 @@ JIsjtu
 
 在终端输入 `/` 可打开命令面板。`/resume` 打开历史会话，`/today` 看今日简报，`/ddl` 汇总作业截止，`/week` 看本周课表。网页模式的默认地址是 `http://127.0.0.1:13376`。保持终端运行，按 `Ctrl+C` 退出。用 `JIsjtu --config` 查看配置文件路径，修改配置或升级后重启生效。
 
-包内 `README.md` 附有从安装到第一次提问的教程，也说明了怎样接入 Canvas、教务和选课社区。升级时重新运行安装器即可，个人配置和历史会话会保留。[随包教程](agent_backend/packaging/README.md)
+包内 `README.md` 附有从安装到第一次提问的教程，也说明了怎样接入 Canvas、教务和选课社区。升级时重新运行安装器即可，个人配置和历史会话会保留。[Windows 指南](agent_backend/packaging/windows/README.md) · [Mac 指南](agent_backend/packaging/README.md)
 
 ## 配置
 
@@ -43,7 +51,7 @@ JIsjtu
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_PASSWORD` | 发信默认使用 `mail.sjtu.edu.cn:465`（TLS）。未单设密码时依次使用 `IMAP_PASSWORD`、`EMAIL_USER_PASSWORD` |
 | `AGENT_BIND_ADDR` | HTTP 和 TCP 共用的监听 IP，默认 `127.0.0.1`。需要局域网访问时可指定本机的局域网 IP |
 | `AGENT_HTTP_PORT` / `AGENT_TCP_PORT` | HTTP 与 TCP 端口，默认 `13376` / `8081` |
-| `AGENT_REMINDERS` | macOS 运行期间提醒上课与作业截止，设为 `0` 可关闭 |
+| `AGENT_REMINDERS` | Windows 和 macOS 运行期间提醒上课与作业截止，设为 `0` 可关闭 |
 | `AGENT_NO_BROWSER` | 设置后，Web 模式启动时跳过自动打开聊天页面，可手动访问终端打印的地址 |
 | `AGENT_FRONTEND_DIR` | 可选，指定前端静态文件目录 |
 | `AGENT_SKILLS_DIR` | 可选，指定技能目录；默认找当前目录或上一级的 `skills/` |
@@ -68,13 +76,13 @@ JIsjtu
 | 水源 | `get_hotnews` 热帖简报、`shuiyuan_search` 搜索、`shuiyuan_topic` 读帖子、`shuiyuan_post` 查看版块、发表主题或回帖 | 水源社区 |
 | 邮件 | `mail_fetch` 列出邮件、按发件人或主题搜索、阅读正文和下载附件，`send_email` 发送纯文本邮件 | 学校邮箱 |
 | 找课件、下载整门课 | `search_files` 跨课程搜索，`course_files` 的 `download_all` 下载指定课程中可访问的全部文件，默认目录为 `~/Downloads/Canvas-<课程id>`。文件名带 Canvas ID，重跑会跳过已有且大小匹配的文件 | Canvas |
-| 读课件、文档 | `pdf_analysis` 可提取 PDF 文本。在 macOS 上还支持离线识别扫描页和截图，或用 `image_page` 将指定页发送给支持图片输入的模型核对公式和图表。`read_office` 可读 `.docx` 的表格和公式、`.pptx` 的讲者备注和 `.xlsx` 的工作表 | 本地文件 |
+| 读课件、文档 | `pdf_analysis` 可提取 PDF 文本。在 Windows 和 macOS 上还支持离线识别扫描页和页内截图，或用 `image_page` 将指定页发送给支持图片输入的模型核对公式和图表。`read_office` 可读 `.docx` 的表格和公式、`.pptx` 的讲者备注和 `.xlsx` 的工作表 | 本地文件 |
 | 写作业、交作业 | `homework` 读取题目、评分细则和附件，检查答案和必交文件后，可提交在线文本或上传文件。聊天中可先看预览，在同一会话 30 分钟内回复“提交”，也可事先说“写完直接交”。核实 Canvas 回执后会显示提交时间和次数 | Canvas、本地文件 |
-| 上课、作业主动提醒 | 程序运行期间，macOS 在上课前 10 分钟、未完成作业截止前 1 小时发送通知。课表需要已登录的教务会话，作业需要 Canvas 令牌 | 教务系统、Canvas |
-| 这节课发起签到了吗 | 对助手说“帮我盯明早 8 点的大学物理有没有发起签到”。`watch_attendance` 发现这节课时段内的新签到记录就发 macOS 通知，并附上页面可见的本人签到状态 | Canvas 课堂签到 |
+| 上课、作业主动提醒 | 程序运行期间，Windows 和 macOS 在上课前 10 分钟、未完成作业截止前 1 小时发送通知。课表需要已登录的教务会话，作业需要 Canvas 令牌 | 教务系统、Canvas |
+| 这节课发起签到了吗 | 对助手说“帮我盯明早 8 点的大学物理有没有发起签到”。`watch_attendance` 发现这节课时段内的新签到记录就发系统通知，并附上页面可见的本人签到状态 | Canvas 课堂签到 |
 | 导入手机日历 | `export_calendar` 把按周展开的课表、已公布的考试和未来 60 天未完成的作业截止导出为 `.ics`，默认保存在 `~/Downloads`。考试和作业截止附带提醒 | 教务系统、Canvas |
 
-签到监看需要 macOS、Python 3、有效的 Canvas 令牌，且该课的 Canvas 菜单已开放「点名签到」。给出课程、日期和开始时间就能安排监看，时间不全时会用教务课表定位。例如 08:00 的课会在 07:50 至 08:05 每 30 秒查一次，中途提出请求就从当时开始。请保持 Mac 唤醒并运行 JIsjtu。每条新记录只提醒一次。如果整个时段都读不到签到页面，结束时会通知查询失败。重启后会恢复尚未过期的任务。
+签到监看需要 Windows 或 macOS、Python 3、有效的 Canvas 令牌，且该课的 Canvas 菜单已开放「点名签到」。给出课程、日期和开始时间就能安排监看，时间不全时会用教务课表定位。例如 08:00 的课会在 07:50 至 08:05 每 30 秒查一次，中途提出请求就从当时开始。请保持电脑唤醒并运行 JIsjtu。每条新记录只提醒一次。如果整个时段都读不到签到页面，结束时会通知查询失败。重启后会恢复尚未过期的任务。
 
 课表、考试、作业截止和签到监看均按北京时间。内置作息第 1 节从 08:00 开始，每节 45 分钟。内置的 2026–2027 学年秋季学期从 2026 年 9 月 14 日开始，共 18 周，第 17–18 周为考试周。要使用尚未内置的学期，可按教务处公布的日期在 `.env` 填写 `SJTU_TERM_START`（第 1 周周一）和 `SJTU_TERM_WEEKS`。[教务处历年校历](https://www.jwc.sjtu.edu.cn/jxxl/lnxl.htm)
 
@@ -104,7 +112,7 @@ cargo run --locked -- --tool get_time_stamp
 
 打开 TUI 或网页界面时，程序会检查已保存的 jAccount 会话。需要登录时，用 `.env` 中的 `EMAIL_USER_ACCOUNT` 和 `EMAIL_USER_PASSWORD` 在后台浏览器登录，本地用 `ddddocr` 识别图片验证码。交大邮箱地址会自动取 `@` 前的账号部分。要跳过启动检查，可以设置 `AGENT_SSO_AUTO_LOGIN=0`，之后按需运行 `JIsjtu --sso-login`。
 
-使用教务、水源等浏览器工具时，需要本机安装 Edge、Chrome 或 Chromium，以及 Python 3.10+。程序优先使用 Edge。安装版设置 Python 环境的方法见[随包说明](agent_backend/packaging/README.md)。
+使用教务、水源等浏览器工具时，需要本机安装 Edge、Chrome 或 Chromium，以及 Python 3.10+。程序优先使用 Edge。Windows 安装版可从开始菜单运行 **JIsjtu 校园依赖** 配置 Python 环境。macOS 安装版的环境设置见[随包说明](agent_backend/packaging/README.md)。
 
 源码用户可在仓库根目录运行下面的命令，创建独立的 Python 环境。
 
@@ -198,6 +206,19 @@ cargo run --locked           # 默认 TUI
 
 ## 构建安装包
 
+### Windows x64
+
+在仓库根目录运行下列命令。在 macOS 或 Linux 构建机上准备 Rust 的 `x86_64-pc-windows-gnu` 目标、MinGW-w64 编译器及 binutils、CMake、Make、curl、tar 和 Python 3。构建脚本会获取并校验 PDFium、Tesseract 和中英文识别模型，最终生成根目录的 `JIsjtu-Windows-x64.zip`。Windows 用户只需解压安装。用于开发时，可将 `AGENT_PDF_TOOLS_DIR` 指向解压目录中的 `pdf-tools`。
+
+```sh
+rustup target add x86_64-pc-windows-gnu
+python3 agent_backend/scripts/package-windows.py
+```
+
+可在 Windows PowerShell 中运行 `powershell -NoProfile -ExecutionPolicy Bypass -File .\agent_backend\scripts\test-windows-package.ps1`，在临时目录验证安装包。要验证随包中英文 OCR 和模型收图，可运行 `py -3 agent_backend/scripts/test-windows-pdf.py "$env:LOCALAPPDATA/JIsjtu/agent.exe"`。测试使用本机模拟模型。
+
+### macOS 和 Linux
+
 在 `agent_backend` 目录运行：
 
 ```sh
@@ -214,7 +235,7 @@ sh scripts/package.sh
 AGENT_PACKAGE_BINARY="$PWD/target/release/agent" sh scripts/package.sh
 ```
 
-默认按当前系统及架构构建；Intel Mac、Apple Silicon Mac、Linux 需要分别构建。Python 和浏览器需在目标机器安装，SSO 依赖按包内说明安装。Linux 包仍依赖相应系统动态库，当前安装脚本不支持 Windows。
+默认按当前系统及架构构建；Intel Mac、Apple Silicon Mac、Linux 需要分别构建。Python 和浏览器需在目标机器安装，SSO 依赖按包内说明安装。Linux 包仍依赖相应系统动态库。
 
 构建本机的 release 和安装包后，在 `agent_backend` 目录运行下面的命令。脚本会校验 ZIP 内容，并在临时目录验证安装、升级和配置保留。
 
